@@ -36,13 +36,8 @@ set(CMAKE_INSTALL_RPATH
     ${CMAKE_INSTALL_RPATH}
     ${RSMITST_RPATH})
 
-# Download and compile googletest
-include(FetchContent)
-FetchContent_Declare(
-    googletest
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG v1.14.0)
-FetchContent_MakeAvailable(googletest)
+# Use system's gtest
+find_package(GTest REQUIRED)
 
 # Other source directories
 aux_source_directory(${SRC_DIR}/functional functionalSources)
@@ -59,7 +54,7 @@ target_include_directories(${RSMITST} PUBLIC ${SRC_DIR}/..)
 target_link_libraries(
     ${RSMITST}
     PUBLIC ${ROCM_SMI_TARGET}
-    PUBLIC GTest::gtest_main
+    PUBLIC GTest::GTest GTest::Main
     PUBLIC c
     PUBLIC stdc++
     PUBLIC pthread
@@ -73,9 +68,3 @@ install(TARGETS ${RSMITST}
 install(FILES rsmitst.exclude
     DESTINATION ${SHARE_INSTALL_PREFIX}/rsmitst_tests
     COMPONENT ${TESTS_COMPONENT})
-
-# install googletest libraries with tests
-install(TARGETS gtest gtest_main
-    DESTINATION ${SHARE_INSTALL_PREFIX}/rsmitst_tests
-    COMPONENT ${TESTS_COMPONENT})
-
