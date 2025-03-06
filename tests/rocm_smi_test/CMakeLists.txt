@@ -54,7 +54,7 @@ target_include_directories(${RSMITST} PUBLIC ${SRC_DIR}/..)
 target_link_libraries(
     ${RSMITST}
     PUBLIC ${ROCM_SMI_TARGET}
-    PUBLIC GTest::GTest GTest::Main
+    PUBLIC GTest::gtest_main
     PUBLIC c
     PUBLIC stdc++
     PUBLIC pthread
