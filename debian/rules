@@ -1,0 +1,39 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+
+ROCM_VERSION=6.2.4
+ROCM_PATH=/opt/rocm-${ROCM_VERSION}
+MAKEOPTS := "-j$(shell nproc)"
+TOP_DIR := $(shell pwd)
+BUILD_PATH := build-rocm
+DEB_INST_DIR := $(TOP_DIR)/debian/rocm-smi-lib
+
+%:
+	dh $@
+
+# 6.2.4 -> 60204
+override_dh_auto_configure:
+	cmake -S ${TOP_DIR} -B ${BUILD_PATH} \
+		-DCMAKE_INSTALL_PREFIX=${ROCM_PATH} \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_C_COMPILER=${ROCM_PATH}/bin/clang \
+		-DCMAKE_CXX_COMPILER=${ROCM_PATH}/bin/clang++ \
+		-DCMAKE_MODULE_PATH="${TOP_DIR}/cmake_modules" \
+		-DBUILD_SHARED_LIBS=ON \
+		-DENABLE_LDCONFIG=ON \
+		-DROCM_SMI_PACKAGE="rocm-smi-lib64" \
+		-DCPACK_PACKAGE_VERSION_MAJOR="1" \
+		-DCPACK_PACKAGE_VERSION_MINOR="$60204" \
+		-DCPACK_PACKAGE_VERSION_PATCH="0" \
+		-DADDRESS_SANITIZER=TRUE \
+		-DBUILD_TESTS=ON
+
+override_dh_auto_build:
+	cmake --build $(BUILD_PATH) -- ${MAKEOPTS}
+
+override_dh_auto_install:
+	DESTDIR=$(DEB_INST_DIR)/ cmake --build $(BUILD_PATH) -- ${MAKEOPTS} install
+
+override_dh_install:
+	echo "dh_install skipped"
