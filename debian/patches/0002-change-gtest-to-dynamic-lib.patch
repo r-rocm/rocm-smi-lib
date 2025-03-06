@@ -1,0 +1,21 @@
+From: Sakura286 <sakura286@outlook.com>
+Date: Thu, 6 Mar 2025 18:57:10 +0800
+Subject: change gtest to dynamic lib
+
+---
+ tests/rocm_smi_test/CMakeLists.txt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/rocm_smi_test/CMakeLists.txt b/tests/rocm_smi_test/CMakeLists.txt
+index b6ff41d..dccbafd 100755
+--- a/tests/rocm_smi_test/CMakeLists.txt
++++ b/tests/rocm_smi_test/CMakeLists.txt
+@@ -54,7 +54,7 @@ target_include_directories(${RSMITST} PUBLIC ${SRC_DIR}/..)
+ target_link_libraries(
+     ${RSMITST}
+     PUBLIC ${ROCM_SMI_TARGET}
+-    PUBLIC GTest::GTest GTest::Main
++    PUBLIC gtest
+     PUBLIC c
+     PUBLIC stdc++
+     PUBLIC pthread
