@@ -2,32 +2,34 @@
 
 export DH_VERBOSE = 1
 
-ROCM_VERSION=6.2.4
-ROCM_PATH=/opt/rocm-${ROCM_VERSION}
-MAKEOPTS := "-j$(shell nproc)"
+ROCM_VERSION=$(shell cat /opt/REVYOS_ROCM_VERSION)
+ROCM_PATH=/opt/rocm-$(ROCM_VERSION)
+
+MAKEOPTS="-j$$(($$(nproc) / 2))"
+
 TOP_DIR := $(shell pwd)
-BUILD_PATH := build-rocm
-DEB_INST_DIR := $(TOP_DIR)/debian/rocm-smi-lib
+SRC_PATH := $(TOP_DIR)
+BUILD_PATH := $(TOP_DIR)/build-rocm
+DEB_INST_DIR := $(TOP_DIR)/debian/tmp
+
+
+REVYOS_ROCM_CMAKE_PARAMS := -S $(SRC_PATH) -B $(BUILD_PATH)
+REVYOS_ROCM_CMAKE_PARAMS += -DCMAKE_INSTALL_PREFIX=$(ROCM_PATH)
+REVYOS_ROCM_CMAKE_PARAMS += -DCMAKE_C_COMPILER=$(ROCM_PATH)/bin/clang
+REVYOS_ROCM_CMAKE_PARAMS += -DCMAKE_CXX_COMPILER=$(ROCM_PATH)/bin/clang++
+REVYOS_ROCM_CMAKE_PARAMS += -DCMAKE_BUILD_TYPE=Release
+REVYOS_ROCM_CMAKE_PARAMS += -DCMAKE_VERBOSE_MAKEFILE=TRUE
+REVYOS_ROCM_CMAKE_PARAMS += -DCMAKE_PREFIX_PATH="$(ROCM_PATH);$(ROCM_PATH)/share/rocm/cmake/;$(ROCM_PATH)/share/rocmcmakebuildtools/cmake"
 
 %:
 	dh $@
 
-# 6.2.4 -> 60204
 override_dh_auto_configure:
-	cmake -S ${TOP_DIR} -B ${BUILD_PATH} \
-		-DCMAKE_INSTALL_PREFIX=${ROCM_PATH} \
-		-DCMAKE_BUILD_TYPE=Release \
-		-DCMAKE_C_COMPILER=${ROCM_PATH}/bin/clang \
-		-DCMAKE_CXX_COMPILER=${ROCM_PATH}/bin/clang++ \
+	cmake $(REVYOS_ROCM_CMAKE_PARAMS) \
 		-DCMAKE_MODULE_PATH="${TOP_DIR}/cmake_modules" \
 		-DBUILD_SHARED_LIBS=ON \
 		-DENABLE_LDCONFIG=ON \
-		-DROCM_SMI_PACKAGE="rocm-smi-lib64" \
-		-DCPACK_PACKAGE_VERSION_MAJOR="1" \
-		-DCPACK_PACKAGE_VERSION_MINOR="$60204" \
-		-DCPACK_PACKAGE_VERSION_PATCH="0" \
-		-DADDRESS_SANITIZER=TRUE \
-		-DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
+		-DROCM_SMI_PACKAGE="rocm-smi-lib64"
 
 # TODO: Test disabled due to gtest linking issues
 #		-DBUILD_TESTS=ON
@@ -39,4 +41,5 @@ override_dh_auto_install:
 	DESTDIR=$(DEB_INST_DIR)/ cmake --build $(BUILD_PATH) -- ${MAKEOPTS} install
 
 override_dh_install:
-	echo "dh_install skipped"
+	sed -i "s,@ROCM_VERSION@,${ROCM_VERSION},g" debian/*.install
+	dh_install

@@ -1,3 +1,9 @@
+rocm-smi-lib (6.2.4-1revyos2) unstable; urgency=medium
+
+  * Split package
+
+ --  <chenxuan@iscas.ac.cn>  Mon, 09 Jun 2025 17:50:58 +0800
+
 rocm-smi-lib (6.2.4-1revyos1) unstable; urgency=medium
 
   * Initial release.

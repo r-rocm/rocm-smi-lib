@@ -1,0 +1,4 @@
+opt/rocm-@ROCM_VERSION@/lib/*.so*
+opt/rocm-@ROCM_VERSION@/libexec
+opt/rocm-@ROCM_VERSION@/bin/rocm-smi
+opt/rocm-@ROCM_VERSION@/share/doc/rocm_smi/LICENSE.txt

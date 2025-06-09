@@ -10,9 +10,9 @@ Build-Depends:
  rocm-core,
  rocm-env,
 Standards-Version: 4.7.0
-Homepage: <insert the upstream URL, if relevant>
-Vcs-Browser: https://github.com/r-rocm/rocprofiler-register
-Vcs-Git: https://github.com/r-rocm/rocprofiler-register.git
+Homepage: https://github.com/ROCm/rocm_smi_lib
+Vcs-Browser: https://github.com/r-rocm/rocm-smi-lib
+Vcs-Git: https://github.com/r-rocm/rocm-smi-lib
 
 Package: rocm-smi-lib
 Architecture: any
@@ -21,5 +21,15 @@ Depends:
  ${misc:Depends},
  rocm-core,
  rocm-env,
-Description: Use C++ in ROCm SMI
- Use C++ in ROCm SMI
+Description: Use C++ in ROCm SMI. Binary package
+ Use C++ in ROCm SMI. Binary package
+
+Package: rocm-smi-lib-dev
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ rocm-core,
+ rocm-env,
+Description: Use C++ in ROCm SMI. Development package
+ Use C++ in ROCm SMI. Development package.
