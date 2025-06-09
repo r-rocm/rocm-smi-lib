@@ -6,7 +6,9 @@ Rules-Requires-Root: no
 Build-Depends:
  debhelper-compat (= 13),
  cmake,
- libgtest-dev
+ libgtest-dev,
+ rocm-core,
+ rocm-env,
 Standards-Version: 4.7.0
 Homepage: <insert the upstream URL, if relevant>
 Vcs-Browser: https://github.com/r-rocm/rocprofiler-register
@@ -17,4 +19,7 @@ Architecture: any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
-Description: rocm-smi-lib
+ rocm-core,
+ rocm-env,
+Description: Use C++ in ROCm SMI
+ Use C++ in ROCm SMI
