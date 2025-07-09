@@ -1,3 +1,9 @@
+rocm-smi-lib (6.2.4-2) unstable; urgency=medium
+
+  * Rebuild with new Trixie base. 
+
+ --  <chenxuan@iscas.ac.cn>  Wed, 09 Jul 2025 12:29:50 +0800
+
 rocm-smi-lib (6.2.4-1revyos2) unstable; urgency=medium
 
   * Split package
