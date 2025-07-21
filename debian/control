@@ -6,6 +6,7 @@ Rules-Requires-Root: no
 Build-Depends:
  debhelper-compat (= 13),
  cmake,
+ libdrm-dev,
  libgtest-dev,
  rocm-core,
  rocm-env,
@@ -31,5 +32,6 @@ Depends:
  ${misc:Depends},
  rocm-core,
  rocm-env,
+ libdrm-dev,
 Description: Use C++ in ROCm SMI. Development package
  Use C++ in ROCm SMI. Development package.
