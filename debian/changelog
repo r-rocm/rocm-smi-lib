@@ -1,3 +1,9 @@
+rocm-smi-lib (6.4.1-1) trixie; urgency=medium
+
+  * Release 6.4.1.
+
+ --  <chenxuan@iscas.ac.cn>  Mon, 21 Jul 2025 09:53:50 +0800
+
 rocm-smi-lib (6.2.4-2) unstable; urgency=medium
 
   * Rebuild with new Trixie base. 

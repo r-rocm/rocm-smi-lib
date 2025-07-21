@@ -11,8 +11,8 @@ Build-Depends:
  rocm-env,
 Standards-Version: 4.7.0
 Homepage: https://github.com/ROCm/rocm_smi_lib
-Vcs-Browser: https://github.com/r-rocm/rocm-smi-lib
-Vcs-Git: https://github.com/r-rocm/rocm-smi-lib
+Vcs-Browser: https://github.com/revyos-rocm/rocm-smi-lib
+Vcs-Git: https://github.com/revyos-rocm/rocm-smi-lib
 
 Package: rocm-smi-lib
 Architecture: any
