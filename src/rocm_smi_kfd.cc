@@ -415,6 +415,13 @@ int GetProcessGPUs(uint32_t pid, std::unordered_set<uint64_t> *gpu_set) {
   return 0;
 }
 
+static int CheckValidProcessInfoData(const std::string& s, int sysfs_ret){
+  if(sysfs_ret==0 && !is_number(s)){
+    return EINVAL;
+  }
+  return sysfs_ret;
+}
+
 int GetProcessInfoForPID(uint32_t pid, rsmi_process_info_t *proc,
                          std::unordered_set<uint64_t> *gpu_set) {
   assert(proc != nullptr);
@@ -464,30 +471,31 @@ int GetProcessInfoForPID(uint32_t pid, rsmi_process_info_t *proc,
     vram_str_path += std::to_string(gpu_id);
 
     err = ReadSysfsStr(vram_str_path, &tmp);
-    if (err) {
-      return err;
-    }
+    auto sysfs_data_errcode = CheckValidProcessInfoData(tmp, err);
 
-    if (!is_number(tmp)) {
-      return EINVAL;
+    // Report all errors, except ENOENT (2), which should be ignored
+    // and the proc->vram_usage should be unmodified
+    if (!(sysfs_data_errcode == 0 || sysfs_data_errcode == ENOENT)){
+      return sysfs_data_errcode;
     }
-
-    proc->vram_usage += std::stoull(tmp);
+    // Do not store any invalid values
+    else if (sysfs_data_errcode == 0) {
+      proc->vram_usage += std::stoull(tmp);
+    }
 
     std::string sdma_str_path = proc_str_path;
     sdma_str_path += "/sdma_";
     sdma_str_path += std::to_string(gpu_id);
 
     err = ReadSysfsStr(sdma_str_path, &tmp);
-    if (err) {
-      return err;
-    }
+    sysfs_data_errcode = CheckValidProcessInfoData(tmp, err);
 
-    if (!is_number(tmp)) {
-      return EINVAL;
+    if (!(sysfs_data_errcode == 0 || sysfs_data_errcode == ENOENT)){
+      return sysfs_data_errcode;
     }
-
-    proc->sdma_usage += std::stoull(tmp);
+    else if (sysfs_data_errcode == 0) {
+      proc->sdma_usage += std::stoull(tmp);
+    }
 
     // Build the path and read from Sysfs file, info that
     // encodes Compute Unit usage by a process of interest
@@ -497,17 +505,20 @@ int GetProcessInfoForPID(uint32_t pid, rsmi_process_info_t *proc,
     cu_occupancy_path += "/cu_occupancy";
 
     err = ReadSysfsStr(cu_occupancy_path, &tmp);
-    if (err == 0) {
-      if (!is_number(tmp)) {
-        return EINVAL;
-      }
+    sysfs_data_errcode = CheckValidProcessInfoData(tmp, err);
+
+    if (!(sysfs_data_errcode == 0 || sysfs_data_errcode == ENOENT)){
+      return sysfs_data_errcode;
+    }
+    else if(sysfs_data_errcode==0){
       // Update CU usage by the process
       proc->cu_occupancy += std::stoi(tmp);
-
       // Collect count of compute units
       cu_count += kfd_node_map[gpu_id]->cu_count();
-    } else {
-      //Some GFX revisions do not provide cu_occupancy debugfs method 
+    }
+    else {
+      // Some GFX revisions do not provide cu_occupancy debugfs method 
+      // which may cause ENOENT
       proc->cu_occupancy = CU_OCCUPANCY_INVALID;
       cu_count = 0;
     }
@@ -1040,6 +1051,7 @@ int KFDNode::get_node_id(uint32_t *node_id) {
   int ret = 0;
   std::string nodeid_path = "/sys/class/kfd/kfd/topology/nodes/"
     + std::to_string(this->node_indx_);
+  *node_id = this->node_indx_;
   ss << __PRETTY_FUNCTION__
      << " | File: " << nodeid_path
      << " | Read node #: " << std::to_string(this->node_indx_)
@@ -1047,7 +1059,6 @@ int KFDNode::get_node_id(uint32_t *node_id) {
      << " | Return: "
      << getRSMIStatusString(amd::smi::ErrnoToRsmiStatus(ret), false)
      << " | ";
-  *node_id = this->node_indx_;
   LOG_DEBUG(ss);
   return ret;
 }

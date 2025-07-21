@@ -24,6 +24,7 @@ import trace
 from io import StringIO
 from time import ctime
 from subprocess import check_output
+from enum import IntEnum
 from typing import TYPE_CHECKING
 
 # only used for type checking
@@ -48,9 +49,9 @@ except ImportError:
 # Minor version - Increment when adding a new feature, set to 0 when major is incremented
 # Patch version - Increment when adding a fix, set to 0 when minor is incremented
 # Hash  version - Shortened commit hash. Print here and not with lib for consistency with amd-smi
-SMI_MAJ = 2
-SMI_MIN = 3
-SMI_PAT = 1
+SMI_MAJ = 3
+SMI_MIN = 0
+SMI_PAT = 0
 # SMI_HASH is provided by rsmiBindings
 __version__ = '%s.%s.%s+%s' % (SMI_MAJ, SMI_MIN, SMI_PAT, SMI_HASH)
 
@@ -88,14 +89,17 @@ validClockNames.sort()
 def driverInitialized():
     """ Returns true if amdgpu is found in the list of initialized modules
     """
-    driverInitialized = ''
-    try:
-        driverInitialized = str(subprocess.check_output("cat /sys/module/amdgpu/initstate |grep live", shell=True))
-    except subprocess.CalledProcessError:
-        pass
-    if len(driverInitialized) > 0:
-        return True
-    return False
+    driverInitialized = False
+    if os.path.exists("/sys/module/amdgpu") :
+        if os.path.exists("/sys/module/amdgpu/initstate"):
+            # amdgpu is loadable module
+            with open("/sys/module/amdgpu/initstate") as initstate:
+                if 'live' in initstate.read():
+                    driverInitialized = True
+        else:
+            # amdgpu is built into the kernel
+            driverInitialized = True
+    return driverInitialized
 
 
 def formatJson(device, log):
@@ -316,7 +320,7 @@ def getDRMDeviceId(device, silent=False):
     dv_id = c_short()
     ret = rocmsmi.rsmi_dev_id_get(device, byref(dv_id))
     device_id_ret = "N/A"
-    if rsmi_ret_ok(ret, device, 'get_device_id', silent):
+    if rsmi_ret_ok(ret, device, 'get_device_id', silent=True):
         device_id_ret = hex(dv_id.value)
     return device_id_ret
 
@@ -331,7 +335,7 @@ def getRev(device, silent=False):
     dv_rev = c_short()
     ret = rocmsmi.rsmi_dev_revision_get(device, byref(dv_rev))
     revision_ret = "N/A"
-    if rsmi_ret_ok(ret, device, 'get_device_rev', silent=silent):
+    if rsmi_ret_ok(ret, device, 'get_device_rev', silent=True):
         revision_ret =  padHexValue(hex(dv_rev.value), 2)
     return revision_ret
 
@@ -342,13 +346,13 @@ def getSubsystemId(device, silent=False):
     :param silent: Turn on to silence error output
         (you plan to handle manually). Default is off.
     """
-    model = create_string_buffer(MAX_BUFF_SIZE)
-    ret = rocmsmi.rsmi_dev_subsystem_name_get(device, model, MAX_BUFF_SIZE)
+    model = c_short()
+    ret = rocmsmi.rsmi_dev_subsystem_id_get(device, byref(model))
     device_model = "N/A"
-    if rsmi_ret_ok(ret, device, 'get_subsystem_name', silent=silent):
-        device_model = model.value.decode()
+    if rsmi_ret_ok(ret, device, 'get_subsystem_name', silent=True):
+        device_model = model.value
         # padHexValue is used for applications that expect 4-digit card models
-        device_model = padHexValue(device_model, 4)
+        device_model = padHexValue(hex(device_model), 4)
     return device_model
 
 def getVendor(device, silent=False):
@@ -390,11 +394,12 @@ def getTargetGfxVersion(device, silent=False):
     :param silent: Turn on to silence error output
         (you plan to handle manually). Default is off.
     """
-    gfx_version = c_uint64()
+    target_graphics_version = c_uint64()
     gfx_ver_ret = "N/A"
-    ret = rocmsmi.rsmi_dev_target_graphics_version_get(device, byref(gfx_version))
+    ret = rocmsmi.rsmi_dev_target_graphics_version_get(device, byref(target_graphics_version))
+    target_graphics_version = hex(target_graphics_version.value)[2:]
     if rsmi_ret_ok(ret, device, 'get_target_gfx_version', silent=silent):
-        gfx_ver_ret = "gfx" + str(gfx_version.value)
+        gfx_ver_ret = "gfx" + str(target_graphics_version)
     return gfx_ver_ret
 
 def getNodeId(device, silent=False):
@@ -413,8 +418,8 @@ def getNodeId(device, silent=False):
     return node_id_ret
 
 def getDeviceName(device, silent=False):
-    """ Return the uint64 value of device's target
-        graphics version as reported by KFD
+    """ Return the uint64 value of device's name
+        reported by KFD
 
     :param device: DRM device identifier
     :param silent: Turn on to silence error output
@@ -423,7 +428,7 @@ def getDeviceName(device, silent=False):
     # Retrieve the device series
     series = create_string_buffer(MAX_BUFF_SIZE)
     device_name_ret = "N/A"
-    ret = rocmsmi.rsmi_dev_name_get(device, series, MAX_BUFF_SIZE)
+    ret = rocmsmi.rsmi_dev_market_name_get(device, series, MAX_BUFF_SIZE)
     if rsmi_ret_ok(ret, device, 'get_name', silent=silent):
         device_name_ret = series.value.decode()
     return device_name_ret
@@ -752,6 +757,19 @@ def getMemoryPartition(device, silent=True):
         return str(currentMemoryPartition.value.decode())
     return "N/A"
 
+def getMemoryPartitionCapabilities(device, silent=True):
+    """ Return the current memory partition capablities of a given device
+
+    :param device: DRM device identifier
+    :param silent: Turn on to silence error output
+        (you plan to handle manually). Default is on.
+    """
+    memoryPartitionCapabilities = create_string_buffer(MAX_BUFF_SIZE)
+    ret = rocmsmi.rsmi_dev_memory_partition_capabilities_get(device, memoryPartitionCapabilities, MAX_BUFF_SIZE)
+    if rsmi_ret_ok(ret, device, 'get_compute_partition', silent) and memoryPartitionCapabilities.value.decode():
+        return str(memoryPartitionCapabilities.value.decode())
+    return "N/A"
+
 
 def print2DArray(dataArray):
     """ Print 2D Array with uniform spacing """
@@ -791,7 +809,7 @@ def printEmptyLine():
         print()
 
 
-def printErrLog(device, err):
+def printErrLog(device, err, is_warning=False):
     """ Print out an error to the SMI log
 
     :param device: DRM device identifier
@@ -802,7 +820,10 @@ def printErrLog(device, err):
     for line in err.split('\n'):
         errstr = 'GPU[%s]\t: %s' % (devName, line)
         if not PRINT_JSON:
-            logging.error(errstr)
+            if not is_warning:
+                logging.error(errstr)
+            else:
+                logging.warning(errstr)
         else:
             logging.debug(errstr)
 
@@ -853,7 +874,7 @@ def printEventList(device, delay, eventList):
             print2DArray([['\rGPU[%d]:\t' % (data.dv_ind), ctime().split()[3], notification_type_names[data.event.value - 1],
                            data.message.decode('utf8') + '\r']])
 
-def printLog(device, metricName, value=None, extraSpace=False, useItalics=False):
+def printLog(device, metricName, value=None, extraSpace=False, useItalics=False, xcp=None):
     """ Print out to the SMI log
 
     :param device: DRM device identifier
@@ -875,7 +896,10 @@ def printLog(device, metricName, value=None, extraSpace=False, useItalics=False)
             formatJson(device, str(metricName))
         return
     if value is not None:
-        logstr = 'GPU[%s]\t\t: %s: %s' % (device, metricName, value)
+        if xcp == None:
+            logstr = 'GPU[%s]\t\t: %s: %s' % (device, metricName, value)
+        else:
+           logstr = 'GPU[%s] XCP[%s]\t: %s: %s' % (device, xcp, metricName, value)
     else:
         logstr = 'GPU[%s]\t\t: %s' % (device, metricName)
     if device is None:
@@ -1147,72 +1171,6 @@ def resetPerfDeterminism(deviceList):
             printLog(device, 'Successfully disabled performance determinism', None)
         else:
             logging.error('GPU[%s]\t\t: Unable to disable performance determinism', device)
-    printLogSpacer()
-
-
-def resetComputePartition(deviceList):
-    """ Reset Compute Partition to its boot state
-
-    :param deviceList: List of DRM devices (can be a single-item list)
-    """
-    printLogSpacer(" Reset compute partition to its boot state ")
-    for device in deviceList:
-        originalPartition = getComputePartition(device)
-        ret = rocmsmi.rsmi_dev_compute_partition_reset(device)
-        if rsmi_ret_ok(ret, device, 'reset_compute_partition', silent=True):
-            resetBootState = getComputePartition(device)
-            printLog(device, "Successfully reset compute partition (" +
-                originalPartition + ") to boot state (" + resetBootState +
-                ")", None)
-        elif ret == rsmi_status_t.RSMI_STATUS_PERMISSION:
-            printLog(device, 'Permission denied', None)
-        elif ret == rsmi_status_t.RSMI_STATUS_NOT_SUPPORTED:
-            printLog(device, 'Not supported on the given system', None)
-        elif ret == rsmi_status_t.RSMI_STATUS_BUSY:
-            printLog(device, 'Device is currently busy, try again later',
-                     None)
-        else:
-            rsmi_ret_ok(ret, device, 'reset_compute_partition')
-            printErrLog(device, 'Failed to reset the compute partition to boot state')
-    printLogSpacer()
-
-
-def resetMemoryPartition(deviceList):
-    """ Reset current memory partition to its boot state
-
-    :param deviceList: List of DRM devices (can be a single-item list)
-    """
-    printLogSpacer(" Reset memory partition to its boot state ")
-    for device in deviceList:
-        originalPartition = getMemoryPartition(device)
-        t1 = multiprocessing.Process(target=showProgressbar,
-                            args=("Resetting memory partition",13,))
-        t1.start()
-        addExtraLine=True
-        start=time.time()
-        ret = rocmsmi.rsmi_dev_memory_partition_reset(device)
-        stop=time.time()
-        duration=stop-start
-        if t1.is_alive():
-            t1.terminate()
-            t1.join()
-        if duration < float(0.1):   # For longer runs, add extra line before output
-            addExtraLine=False      # This is to prevent overriding progress bar
-        if rsmi_ret_ok(ret, device, 'reset_memory_partition', silent=True):
-            resetBootState = getMemoryPartition(device)
-            printLog(device, "Successfully reset memory partition (" +
-                originalPartition + ") to boot state (" +
-                resetBootState + ")", None, addExtraLine)
-        elif ret == rsmi_status_t.RSMI_STATUS_PERMISSION:
-            printLog(device, 'Permission denied', None, addExtraLine)
-        elif ret == rsmi_status_t.RSMI_STATUS_NOT_SUPPORTED:
-            printLog(device, 'Not supported on the given system', None, addExtraLine)
-        elif ret == rsmi_status_t.RSMI_STATUS_BUSY:
-            printLog(device, 'Device is currently busy, try again later',
-                     None)
-        else:
-            rsmi_ret_ok(ret, device, 'reset_memory_partition')
-            printErrLog(device, 'Failed to reset memory partition to boot state')
     printLogSpacer()
 
 
@@ -1882,14 +1840,20 @@ def showProgressbar(title="", timeInSeconds=13):
         time.sleep(1)
 
 
-def setMemoryPartition(deviceList, memoryPartition):
+def setMemoryPartition(deviceList, memoryPartition, autoRespond):
     """ Sets memory partition (memory partition) for a list of devices
 
     :param deviceList: List of DRM devices (can be a single-item list)
     :param memoryPartition: Memory Partition type to set as
     """
+    addExtraLine=False
     printLogSpacer(' Set memory partition to %s ' % (str(memoryPartition).upper()))
+    confirmChangingMemoryPartitionAndReloadingAMDGPU(autoRespond)
     for device in deviceList:
+        current_memory_partition = getMemoryPartition(device, silent=True)
+        if current_memory_partition == 'N/A':
+            printLog(device, 'Not supported on the given system', None, addExtraLine)
+            continue
         memoryPartition = memoryPartition.upper()
         if memoryPartition not in memory_partition_type_l:
             printErrLog(device, 'Invalid memory partition type %s'
@@ -1898,8 +1862,9 @@ def setMemoryPartition(deviceList, memoryPartition):
                         (', '.join(map(str, memory_partition_type_l))) ))
             return (None, None)
 
+        kTimeWait = 140
         t1 = multiprocessing.Process(target=showProgressbar,
-                            args=("Updating memory partition",13,))
+                            args=("Updating memory partition",kTimeWait,))
         t1.start()
         addExtraLine=True
         start=time.time()
@@ -1921,12 +1886,19 @@ def setMemoryPartition(deviceList, memoryPartition):
             printLog(device, 'Permission denied', None, addExtraLine)
         elif ret == rsmi_status_t.RSMI_STATUS_NOT_SUPPORTED:
             printLog(device, 'Not supported on the given system', None, addExtraLine)
+        elif ret == rsmi_status_t.RSMI_STATUS_INVALID_ARGS:
+            printLog(device, 'Device does not support setting to ' + str(memoryPartition).upper(), None, addExtraLine)
+            memory_partition_caps = getMemoryPartitionCapabilities(device, silent=True)
+            printLog(device, 'Available memory partition modes: ' + str(memory_partition_caps).upper(), None, addExtraLine)
         elif ret == rsmi_status_t.RSMI_STATUS_BUSY:
             printLog(device, 'Device is currently busy, try again later',
                      None, addExtraLine)
+        elif ret == rsmi_status_t.RSMI_STATUS_AMDGPU_RESTART_ERR:
+            printLog(device, 'Issue reloading driver, please check dmsg for errors',
+                     None, addExtraLine)
         else:
             rsmi_ret_ok(ret, device, 'set_memory_partition')
-            printErrLog(device, 'Failed to retrieve memory partition, even though device supports it.')
+            printErrLog(device, 'Failed to set memory partition, even though device supports it.')
     printLogSpacer()
 
 def showVersion(isCSV=False):
@@ -2005,22 +1977,28 @@ def showAllConcise(deviceList):
                              + getComputePartition(device, silent)
                              + ", " + getPartitionId(device, silent))
         sclk = showCurrentClocks([device], 'sclk', concise=silent)
+        if not sclk:
+            sclk = 'N/A'
         mclk = showCurrentClocks([device], 'mclk', concise=silent)
+        if not mclk:
+            mclk = 'N/A'
         (retCode, fanLevel, fanSpeed) = getFanSpeed(device, silent)
         fan = str(fanSpeed) + '%'
         if getPerfLevel(device, silent) != -1:
-            perf = getPerfLevel(device, silent)
+            perf = str(getPerfLevel(device, silent)).lower()
         else:
-            perf = 'Unsupported'
+            perf = 'N/A'
         if getMaxPower(device, silent) != -1:
             pwrCap = str(getMaxPower(device, silent)) + 'W'
         else:
-            pwrCap = 'Unsupported'
+            pwrCap = 'N/A'
         if getGpuUse(device, silent) != -1:
             gpu_busy = str(getGpuUse(device, silent)) + '%'
         else:
-            gpu_busy = 'Unsupported'
+            gpu_busy = 'N/A'
         allocated_mem_percent = getAllocatedMemoryPercent(device)
+        if allocated_mem_percent['ret'] != rsmi_status_t.RSMI_STATUS_SUCCESS:
+            allocated_mem_percent['combined'] = 'N/A'
 
         # Top Row - per device data
         values['card%s' % (str(device))] = [device, getNodeId(device),
@@ -2028,7 +2006,7 @@ def showAllConcise(deviceList):
                                             str(getGUID(device)),
                                             temp_val, powerVal,
                                             combined_partition_data,
-                                            sclk, mclk, fan, str(perf).lower(),
+                                            sclk, mclk, fan, perf,
                                             str(pwrCap),
                                             allocated_mem_percent['combined'],
                                             str(gpu_busy)]
@@ -2327,7 +2305,7 @@ def showFwInfo(deviceList, fwType):
         for fw_name in firmware_blocks:
             fw_name = fw_name.upper()
             ret = rocmsmi.rsmi_dev_firmware_version_get(device, fw_block_names_l.index(fw_name), byref(fw_ver))
-            if rsmi_ret_ok(ret, device, 'get_firmware_version_' + str(fw_name)):
+            if rsmi_ret_ok(ret, device, 'get_firmware_version_' + str(fw_name), silent=True):
                 # The VCN, VCE, UVD, SOS and ASD firmware's value needs to be in hexadecimal
                 if fw_name in ['VCN', 'VCE', 'UVD', 'SOS', 'ASD', 'MES', 'MES KIQ']:
                     printLog(device, '%s firmware version' % (fw_name),
@@ -2535,7 +2513,7 @@ def showMemUse(deviceList):
         printLog(device, 'GPU Memory Allocated (VRAM%)',
                  int(allocated_mem_percent['value']))
         ret = rocmsmi.rsmi_dev_memory_busy_percent_get(device, byref(memoryUse))
-        if rsmi_ret_ok(ret, device, '% memory use'):
+        if rsmi_ret_ok(ret, device, '% memory use', silent=True):
             printLog(device, 'GPU Memory Read/Write Activity (%)', memoryUse.value)
         util_counters = getCoarseGrainUtil(device, "Memory Activity")
         if util_counters != -1:
@@ -2856,7 +2834,7 @@ def showRange(deviceList, rangeType):
                 int(odvf.curr_mclk_range.lower_bound / 1000000), int(odvf.curr_mclk_range.upper_bound / 1000000)), None)
             if rangeType == 'voltage':
                 if odvf.num_regions == 0:
-                    printErrLog(device, 'Voltage curve regions unsupported.')
+                    printErrLog(device, 'Voltage curve regions unsupported.', is_warning=True)
                     continue
                 num_regions = c_uint32(odvf.num_regions)
                 regions = (rsmi_freq_volt_region_t * odvf.num_regions)()
@@ -3201,7 +3179,7 @@ def showVoltageCurve(deviceList):
                 position, int(list(odvf.curve.vc_points)[position].frequency / 1000000),
                 int(list(odvf.curve.vc_points)[position].voltage)), None)
         else:
-            printErrLog(device, 'Voltage curve Points unsupported.')
+            printErrLog(device, 'Voltage curve Points unsupported.', is_warning=True)
     printLogSpacer()
 
 
@@ -3540,6 +3518,338 @@ def showMemoryPartition(deviceList):
             printErrLog(device, 'Failed to retrieve current memory partition, even though device supports it.')
     printLogSpacer()
 
+class UIntegerTypes(IntEnum):
+    UINT8_T  = 0xFF
+    UINT16_T = 0xFFFF
+    UINT32_T = 0xFFFFFFFF
+    UINT64_T = 0xFFFFFFFFFFFFFFFF
+
+def validateIfMaxUint(valToCheck, uintType: UIntegerTypes):
+    return_val = "N/A"
+    if not isinstance(valToCheck, list):
+        if valToCheck == uintType:
+            return return_val
+        else:
+            return valToCheck
+    else:
+        return_val = valToCheck
+        for idx, v in enumerate(valToCheck):
+            if v == uintType:
+                return_val[idx] = "N/A"
+    return return_val
+
+def showGPUMetrics(deviceList):
+    """ Returns the gpu metrics for a list of devices
+
+    :param deviceList: List of DRM devices (can be a single-item list)
+    """
+    printLogSpacer(' GPU Metrics ')
+    gpu_metrics = rsmi_gpu_metrics_t()
+    temp_unit="C"
+    power_unit="W"
+    energy_unit="15.259uJ (2^-16)"
+    volt_unit="mV"
+    clock_unit="MHz"
+    fan_speed="rpm"
+    percent_unit="%"
+    vram_max_bw="GB/s"
+    pcie_acc_unit="GB/s"
+    pcie_lanes_unit="Lanes"
+    pcie_speed_unit="0.1 GT/s"
+    xgmi_speed="Gbps"
+    xgmi_data_sz="kB"
+    time_unit="ns"
+    time_unit_10="10ns resolution"
+    count="Count"
+    link_status="Up/Down"
+    no_unit = None
+
+    for device in deviceList:
+        ret = rocmsmi.rsmi_dev_gpu_metrics_info_get(device, byref(gpu_metrics))
+        metrics = {
+            "common_header": "N/A"
+        }
+        if rsmi_ret_ok(ret, device, 'rsmi_dev_gpu_metrics_info_get',silent=True):
+            metrics = {
+            "common_header": {
+                "version": float(str(gpu_metrics.common_header.format_revision) + "."
+                              + str(gpu_metrics.common_header.content_revision)),
+                "size": gpu_metrics.common_header.structure_size
+            }, "temperature_edge": {
+                "value": validateIfMaxUint(gpu_metrics.temperature_edge, UIntegerTypes.UINT16_T),
+                "unit": temp_unit,
+            }, "temperature_hotspot": {
+                "value": validateIfMaxUint(gpu_metrics.temperature_hotspot, UIntegerTypes.UINT16_T),
+                "unit": temp_unit,
+            }, "temperature_mem": {
+                "value": validateIfMaxUint(gpu_metrics.temperature_mem, UIntegerTypes.UINT16_T),
+                "unit": temp_unit,
+            }, "temperature_vrgfx": {
+                "value": validateIfMaxUint(gpu_metrics.temperature_vrgfx, UIntegerTypes.UINT16_T),
+                "unit": temp_unit,
+            }, "temperature_vrsoc": {
+                "value": validateIfMaxUint(gpu_metrics.temperature_vrsoc, UIntegerTypes.UINT16_T),
+                "unit": temp_unit,
+            }, "temperature_vrmem": {
+                "value": validateIfMaxUint(gpu_metrics.temperature_vrmem, UIntegerTypes.UINT16_T),
+                "unit": temp_unit,
+            }, "average_gfx_activity": {
+                "value": validateIfMaxUint(gpu_metrics.average_gfx_activity, UIntegerTypes.UINT16_T),
+                "unit": percent_unit,
+            }, "average_umc_activity": {
+                "value": validateIfMaxUint(gpu_metrics.average_umc_activity, UIntegerTypes.UINT16_T),
+                "unit": percent_unit,
+            }, "average_mm_activity": {
+                "value": validateIfMaxUint(gpu_metrics.average_mm_activity, UIntegerTypes.UINT16_T),
+                "unit": percent_unit,
+            }, "average_socket_power": {
+                "value": validateIfMaxUint(gpu_metrics.average_socket_power, UIntegerTypes.UINT16_T),
+                "unit": power_unit,
+            }, "energy_accumulator": {
+                "value": validateIfMaxUint(gpu_metrics.energy_accumulator, UIntegerTypes.UINT64_T),
+                "unit": energy_unit,
+            }, "system_clock_counter": {
+                "value": validateIfMaxUint(gpu_metrics.system_clock_counter, UIntegerTypes.UINT64_T),
+                "unit": time_unit,
+            }, "average_gfxclk_frequency": {
+                "value": validateIfMaxUint(gpu_metrics.average_gfxclk_frequency, UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "average_socclk_frequency": {
+                "value": validateIfMaxUint(gpu_metrics.average_socclk_frequency, UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "average_uclk_frequency": {
+                "value": validateIfMaxUint(gpu_metrics.average_uclk_frequency, UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "average_vclk0_frequency": {
+                "value": validateIfMaxUint(gpu_metrics.average_vclk0_frequency, UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "average_dclk0_frequency": {
+                "value": validateIfMaxUint(gpu_metrics.average_dclk0_frequency, UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "average_vclk1_frequency": {
+                "value": validateIfMaxUint(gpu_metrics.average_vclk1_frequency, UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "average_dclk1_frequency": {
+                "value": validateIfMaxUint(gpu_metrics.average_dclk1_frequency, UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "current_gfxclk": {
+                "value": validateIfMaxUint(gpu_metrics.current_gfxclk, UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "current_socclk": {
+                "value": validateIfMaxUint(gpu_metrics.current_socclk, UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "current_uclk": {
+                "value": validateIfMaxUint(gpu_metrics.current_uclk, UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "current_vclk0": {
+                "value": validateIfMaxUint(gpu_metrics.current_vclk0, UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "current_dclk0": {
+                "value": validateIfMaxUint(gpu_metrics.current_dclk0, UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "current_vclk1": {
+                "value": validateIfMaxUint(gpu_metrics.current_vclk1, UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "current_dclk1": {
+                "value": validateIfMaxUint(gpu_metrics.current_dclk1, UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "throttle_status": {
+                "value": validateIfMaxUint(gpu_metrics.throttle_status, UIntegerTypes.UINT32_T),
+                "unit": no_unit,
+            }, "current_fan_speed": {
+                "value": validateIfMaxUint(gpu_metrics.current_fan_speed, UIntegerTypes.UINT16_T),
+                "unit": fan_speed,
+            }, "pcie_link_width": {
+                "value": validateIfMaxUint(gpu_metrics.pcie_link_width, UIntegerTypes.UINT16_T),
+                "unit": pcie_lanes_unit,
+            }, "pcie_link_speed": {
+                "value": validateIfMaxUint(gpu_metrics.pcie_link_speed, UIntegerTypes.UINT16_T),
+                "unit": pcie_speed_unit,
+            }, "gfx_activity_acc": {
+                "value": validateIfMaxUint(gpu_metrics.gfx_activity_acc, UIntegerTypes.UINT32_T),
+                "unit": percent_unit,
+            }, "mem_activity_acc": {
+                "value": validateIfMaxUint(gpu_metrics.mem_activity_acc, UIntegerTypes.UINT32_T),
+                "unit": percent_unit,
+            }, "temperature_hbm": {
+                "value": validateIfMaxUint(list(gpu_metrics.temperature_hbm), UIntegerTypes.UINT16_T),
+                "unit": temp_unit,
+            }, "firmware_timestamp": {
+                "value": validateIfMaxUint(gpu_metrics.firmware_timestamp, UIntegerTypes.UINT64_T),
+                "unit": time_unit_10,
+            }, "voltage_soc": {
+                "value": validateIfMaxUint(gpu_metrics.voltage_soc, UIntegerTypes.UINT16_T),
+                "unit": volt_unit,
+            }, "voltage_gfx": {
+                "value": validateIfMaxUint(gpu_metrics.voltage_gfx, UIntegerTypes.UINT16_T),
+                "unit": volt_unit,
+            }, "voltage_mem": {
+                "value": validateIfMaxUint(gpu_metrics.voltage_mem, UIntegerTypes.UINT16_T),
+                "unit": volt_unit,
+            }, "indep_throttle_status": {
+                "value": validateIfMaxUint(gpu_metrics.indep_throttle_status, UIntegerTypes.UINT64_T),
+                "unit": no_unit,
+            }, "current_socket_power": {
+                "value": validateIfMaxUint(gpu_metrics.current_socket_power, UIntegerTypes.UINT16_T),
+                "unit": power_unit,
+            }, "vcn_activity": {
+                "value": validateIfMaxUint(list(gpu_metrics.vcn_activity), UIntegerTypes.UINT16_T),
+                "unit": percent_unit,
+            }, "gfxclk_lock_status": {
+                "value": validateIfMaxUint(gpu_metrics.gfxclk_lock_status, UIntegerTypes.UINT32_T),
+                "unit": no_unit,
+            }, "xgmi_link_width": {
+                "value": validateIfMaxUint(gpu_metrics.xgmi_link_width, UIntegerTypes.UINT16_T),
+                "unit": no_unit,
+            }, "xgmi_link_speed": {
+                "value": validateIfMaxUint(gpu_metrics.xgmi_link_speed, UIntegerTypes.UINT16_T),
+                "unit": xgmi_speed,
+            }, "pcie_bandwidth_acc": {
+                "value": validateIfMaxUint(gpu_metrics.pcie_bandwidth_acc, UIntegerTypes.UINT64_T),
+                "unit": pcie_acc_unit,
+            }, "pcie_bandwidth_inst": {
+                "value": validateIfMaxUint(gpu_metrics.pcie_bandwidth_inst, UIntegerTypes.UINT64_T),
+                "unit": pcie_acc_unit,
+            }, "pcie_l0_to_recov_count_acc": {
+                "value": validateIfMaxUint(gpu_metrics.pcie_l0_to_recov_count_acc, UIntegerTypes.UINT64_T),
+                "unit": count,
+            }, "pcie_replay_count_acc": {
+                "value": validateIfMaxUint(gpu_metrics.pcie_replay_count_acc, UIntegerTypes.UINT64_T),
+                "unit": count,
+            }, "pcie_replay_rover_count_acc": {
+                "value": validateIfMaxUint(gpu_metrics.pcie_replay_rover_count_acc, UIntegerTypes.UINT64_T),
+                "unit": count,
+            }, "xgmi_read_data_acc": {
+                "value": validateIfMaxUint(list(gpu_metrics.xgmi_read_data_acc), UIntegerTypes.UINT64_T),
+                "unit": xgmi_data_sz,
+            }, "xgmi_write_data_acc": {
+                "value": validateIfMaxUint(list(gpu_metrics.xgmi_write_data_acc), UIntegerTypes.UINT64_T),
+                "unit": xgmi_data_sz,
+            }, "current_gfxclks": {
+                "value": validateIfMaxUint(list(gpu_metrics.current_gfxclks), UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "current_socclks": {
+                "value": validateIfMaxUint(list(gpu_metrics.current_socclks), UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "current_vclk0s": {
+                "value": validateIfMaxUint(list(gpu_metrics.current_vclk0s), UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "current_dclk0s": {
+                "value": validateIfMaxUint(list(gpu_metrics.current_dclk0s), UIntegerTypes.UINT16_T),
+                "unit": clock_unit,
+            }, "jpeg_activity": {
+                "value": validateIfMaxUint(list(gpu_metrics.jpeg_activity), UIntegerTypes.UINT16_T),
+                "unit": percent_unit,
+            }, "pcie_nak_sent_count_acc": {
+                "value": validateIfMaxUint(gpu_metrics.pcie_nak_sent_count_acc, UIntegerTypes.UINT32_T),
+                "unit": count,
+            }, "pcie_nak_rcvd_count_acc": {
+                "value": validateIfMaxUint(gpu_metrics.pcie_nak_rcvd_count_acc, UIntegerTypes.UINT32_T),
+                "unit": count,
+            }, "accumulation_counter": {
+                "value": validateIfMaxUint(gpu_metrics.accumulation_counter, UIntegerTypes.UINT64_T),
+                "unit": count,
+            }, "prochot_residency_acc": {
+                "value": validateIfMaxUint(gpu_metrics.prochot_residency_acc, UIntegerTypes.UINT64_T),
+                "unit": count,
+            }, "ppt_residency_acc": {
+                "value": validateIfMaxUint(gpu_metrics.ppt_residency_acc, UIntegerTypes.UINT64_T),
+                "unit": count,
+            }, "socket_thm_residency_acc": {
+                "value": validateIfMaxUint(gpu_metrics.socket_thm_residency_acc, UIntegerTypes.UINT64_T),
+                "unit": count,
+            }, "vr_thm_residency_acc": {
+                "value": validateIfMaxUint(gpu_metrics.vr_thm_residency_acc, UIntegerTypes.UINT64_T),
+                "unit": count,
+            }, "hbm_thm_residency_acc": {
+                "value": validateIfMaxUint(gpu_metrics.hbm_thm_residency_acc, UIntegerTypes.UINT64_T),
+                "unit": count,
+            },
+            "pcie_lc_perf_other_end_recovery": {
+                "value": validateIfMaxUint(gpu_metrics.pcie_lc_perf_other_end_recovery, UIntegerTypes.UINT32_T),
+                "unit": count,
+            },
+            "vram_max_bandwidth": {
+                "value": validateIfMaxUint(gpu_metrics.vram_max_bandwidth, UIntegerTypes.UINT64_T),
+                "unit": vram_max_bw,
+            },
+            "xgmi_link_status": {
+                "value": validateIfMaxUint(list(gpu_metrics.xgmi_link_status), UIntegerTypes.UINT16_T),
+                "unit": link_status,
+            },
+            "num_partition": {
+                "value": validateIfMaxUint(gpu_metrics.num_partition, UIntegerTypes.UINT16_T),
+                "unit": no_unit,
+            },
+            "xcp_stats.gfx_busy_inst": {
+                "value": gpu_metrics.xcp_stats,
+                "unit": percent_unit,
+            },
+            "xcp_stats.jpeg_busy": {
+            "value": gpu_metrics.xcp_stats,
+                "unit": percent_unit,
+            },
+            "xcp_stats.vcn_busy": {
+                "value": gpu_metrics.xcp_stats,
+                "unit": percent_unit,
+            },
+            "xcp_stats.gfx_busy_acc": {
+                "value": gpu_metrics.xcp_stats,
+                "unit": count,
+            },
+            "xcp_stats.gfx_below_host_limit_acc": {
+                "value": gpu_metrics.xcp_stats,
+                "unit": percent_unit,
+            },
+        }
+
+            printLog(device, 'Metric Version and Size (Bytes)',
+                     str(metrics["common_header"]["version"]) + " " + str(metrics["common_header"]["size"]))
+            for k,v in metrics.items():
+                if k != "common_header" and 'xcp_stats' not in k:
+                    if v["unit"] != None:
+                        printLog(device, k + " (" + str(v["unit"]) + ")", str(v["value"]))
+                    elif v["unit"] == None:
+                       printLog(device, k, str(v["value"]))
+                if 'xcp_stats.gfx_busy_inst' in k:
+                    for curr_xcp, item in enumerate(v['value']):
+                        print_xcp_detail = []
+                        for _, val in enumerate(item.gfx_busy_inst):
+                            print_xcp_detail.append(validateIfMaxUint(val, UIntegerTypes.UINT32_T))
+                        printLog(device, k + " (" + str(v["unit"]) + ")", str(print_xcp_detail), xcp=str(curr_xcp))
+                if 'xcp_stats.jpeg_busy' in k:
+                    for curr_xcp, item in enumerate(v['value']):
+                        print_xcp_detail = []
+                        for _, val in enumerate(item.jpeg_busy):
+                            print_xcp_detail.append(validateIfMaxUint(val, UIntegerTypes.UINT16_T))
+                        printLog(device, k + " (" + str(v["unit"]) + ")", str(print_xcp_detail), xcp=str(curr_xcp))
+                if 'xcp_stats.vcn_busy' in k:
+                    for curr_xcp, item in enumerate(v['value']):
+                        print_xcp_detail = []
+                        for _, val in enumerate(item.vcn_busy):
+                            print_xcp_detail.append(validateIfMaxUint(val, UIntegerTypes.UINT16_T))
+                        printLog(device, k + " (" + str(v["unit"]) + ")", str(print_xcp_detail), xcp=str(curr_xcp))
+                if 'xcp_stats.gfx_busy_acc' in k:
+                    for curr_xcp, item in enumerate(v['value']):
+                        print_xcp_detail = []
+                        for _, val in enumerate(item.gfx_busy_acc):
+                            print_xcp_detail.append(validateIfMaxUint(val, UIntegerTypes.UINT64_T))
+                        printLog(device, k + " (" + str(v["unit"]) + ")", str(print_xcp_detail), xcp=str(curr_xcp))
+                if 'xcp_stats.gfx_below_host_limit_acc' in k:
+                    for curr_xcp, item in enumerate(v['value']):
+                        print_xcp_detail = []
+                        for _, val in enumerate(item.gfx_below_host_limit_acc):
+                            print_xcp_detail.append(validateIfMaxUint(val, UIntegerTypes.UINT64_T))
+                        printLog(device, k + " (" + str(v["unit"]) + ")", str(print_xcp_detail), xcp=str(curr_xcp))
+
+            if int(device) < (len(deviceList) - 1):
+                printLogSpacer()
+        elif ret == rsmi_status_t.RSMI_STATUS_NOT_SUPPORTED:
+            printLog(device, 'Not supported on the given system', None)
+        else:
+            rsmi_ret_ok(ret, device, 'get_gpu_metrics')
+            printErrLog(device, 'Failed to retrieve GPU metrics, metric version may not be supported for this device.')
+    printLogSpacer()
 
 def checkAmdGpus(deviceList):
     """ Check if there are any AMD GPUs being queried,
@@ -3590,6 +3900,32 @@ def confirmOutOfSpecWarning(autoRespond):
         return
     else:
         sys.exit('Confirmation not given. Exiting without setting value')
+
+def confirmChangingMemoryPartitionAndReloadingAMDGPU(autoRespond):
+    """ Print the warning for running outside of specification and prompt user to accept the terms.
+
+    :param autoRespond: Response to automatically provide for all prompts
+    """
+    print('''
+          ******WARNING******\n
+          Setting Dynamic Memory (NPS) partition modes require users to quit all GPU workloads.
+          ROCm SMI will then attempt to change memory (NPS) partition mode.
+          Upon a successful set, ROCm SMI will then initiate an action to restart AMD GPU driver.
+          This action will change all GPU's in the hive to the requested memory (NPS) partition mode.
+
+          Please use this utility with caution.
+          ''')
+    if not autoRespond:
+        user_input = input('Do you accept these terms? [Y/N] ')
+    else:
+        user_input = autoRespond
+    if user_input in ['Yes', 'yes', 'y', 'Y', 'YES']:
+        print('')
+        return
+    else:
+        print('Confirmation not given. Exiting without setting value')
+        printLogSpacer()
+        sys.exit(1)
 
 
 def doesDeviceExist(device):
@@ -3909,6 +4245,7 @@ if __name__ == '__main__':
     groupDisplay.add_argument('--shownodesbw', help='Shows the numa nodes ', action='store_true')
     groupDisplay.add_argument('--showcomputepartition', help='Shows current compute partitioning ', action='store_true')
     groupDisplay.add_argument('--showmemorypartition', help='Shows current memory partition ', action='store_true')
+    groupDisplay.add_argument('--showmetrics', help='Show current gpu metric data ', action='store_true')
 
     groupActionReset.add_argument('-r', '--resetclocks', help='Reset clocks and OverDrive to default',
                                   action='store_true')
@@ -3919,8 +4256,6 @@ if __name__ == '__main__':
                                   action='store_true')
     groupActionReset.add_argument('--resetxgmierr', help='Reset XGMI error count', action='store_true')
     groupActionReset.add_argument('--resetperfdeterminism', help='Disable performance determinism', action='store_true')
-    groupActionReset.add_argument('--resetcomputepartition', help='Resets to boot compute partition state', action='store_true')
-    groupActionReset.add_argument('--resetmemorypartition', help='Resets to boot memory partition state', action='store_true')
     groupAction.add_argument('--setclock',
                              help='Set Clock Frequency Level(s) for specified clock (requires manual Perf level)',
                              metavar=('TYPE','LEVEL'), nargs=2)
@@ -4008,7 +4343,7 @@ if __name__ == '__main__':
             or args.setpoweroverdrive or args.resetpoweroverdrive or args.rasenable or args.rasdisable or \
             args.rasinject or args.gpureset or args.setperfdeterminism or args.setslevel or args.setmlevel or \
             args.setvc or args.setsrange or args.setextremum or args.setmrange or args.setclock or \
-            args.setcomputepartition or args.setmemorypartition or args.resetcomputepartition or args.resetmemorypartition:
+            args.setcomputepartition or args.setmemorypartition:
         relaunchAsSudo()
 
     # If there is one or more device specified, use that for all commands, otherwise use a
@@ -4075,6 +4410,7 @@ if __name__ == '__main__':
         args.showvc = True
         args.showcomputepartition = True
         args.showmemorypartition = True
+        args.showmetrics = True
 
         if not PRINT_JSON:
             args.showprofile = True
@@ -4205,6 +4541,8 @@ if __name__ == '__main__':
         showComputePartition(deviceList)
     if args.showmemorypartition:
         showMemoryPartition(deviceList)
+    if args.showmetrics:
+       showGPUMetrics(deviceList)
     if args.setclock:
         setClocks(deviceList, args.setclock[0], [int(args.setclock[1])])
     if args.setsclk:
@@ -4248,17 +4586,13 @@ if __name__ == '__main__':
     if args.setcomputepartition:
         setComputePartition(deviceList, args.setcomputepartition[0])
     if args.setmemorypartition:
-        setMemoryPartition(deviceList, args.setmemorypartition[0])
+        setMemoryPartition(deviceList, args.setmemorypartition[0], args.autorespond)
     if args.resetprofile:
         resetProfile(deviceList)
     if args.resetxgmierr:
         resetXgmiErr(deviceList)
     if args.resetperfdeterminism:
         resetPerfDeterminism(deviceList)
-    if args.resetcomputepartition:
-        resetComputePartition(deviceList)
-    if args.resetmemorypartition:
-        resetMemoryPartition(deviceList)
     if args.rasenable:
         setRas(deviceList, 'enable', args.rasenable[0], args.rasenable[1])
     if args.rasdisable:
@@ -4283,7 +4617,7 @@ if __name__ == '__main__':
             if not JSON_DATA['card' + str(device)]:
                 JSON_DATA.pop('card' + str(device))
         if not JSON_DATA:
-            logging.warn("No JSON data to report")
+            logging.warning("No JSON data to report")
             sys.exit(RETCODE)
 
         if not args.csv:

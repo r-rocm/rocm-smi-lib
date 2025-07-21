@@ -1,6 +1,9 @@
 #
 # Minimum version of cmake and C++ required
 #
+message("&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
+message("                    CMake ROCm SMI (Library) [root]                ")
+message("&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
 cmake_minimum_required(VERSION 3.14)
 
 set(ROCM_SMI_LIBS_TARGET "rocm_smi_libraries")
@@ -13,6 +16,8 @@ if(NOT DEFINED CMAKE_MODULE_PATH)
 endif()
 ## Include common cmake modules
 include(utils)
+
+find_package(PkgConfig)
 
 # Default libdir to "lib", this skips GNUInstallDirs from trying to take a guess if it's unset:
 set(CMAKE_INSTALL_LIBDIR "lib" CACHE STRING "Library install directory")
@@ -36,9 +41,10 @@ set(SHARE_INSTALL_PREFIX
 # provide git to utilities
 find_program (GIT NAMES git)
 
+
 ## Setup the package version based on git tags.
 set(PKG_VERSION_GIT_TAG_PREFIX "rsmi_pkg_ver")
-get_package_version_number("7.3.0" ${PKG_VERSION_GIT_TAG_PREFIX} GIT)
+get_package_version_number("7.6.0" ${PKG_VERSION_GIT_TAG_PREFIX} GIT)
 message("Package version: ${PKG_VERSION_STR}")
 set(${ROCM_SMI_LIBS_TARGET}_VERSION_MAJOR "${CPACK_PACKAGE_VERSION_MAJOR}")
 set(${ROCM_SMI_LIBS_TARGET}_VERSION_MINOR "${CPACK_PACKAGE_VERSION_MINOR}")
@@ -154,6 +160,7 @@ set(CMN_SRC_LIST ${CMN_SRC_LIST} "${COMMON_SRC_DIR}/rocm_smi_gpu_metrics.cc")
 set(CMN_SRC_LIST ${CMN_SRC_LIST} "${COMMON_SRC_DIR}/rocm_smi.cc")
 set(CMN_SRC_LIST ${CMN_SRC_LIST} "${COMMON_SRC_DIR}/rocm_smi_logger.cc")
 set(CMN_SRC_LIST ${CMN_SRC_LIST} "${COMMON_SRC_DIR}/rocm_smi_properties.cc")
+set(CMN_SRC_LIST ${CMN_SRC_LIST} "${COMMON_SRC_DIR}/rocm_smi_lib_loader.cc")
 set(CMN_SRC_LIST ${CMN_SRC_LIST} "${SHR_MUTEX_DIR}/shared_mutex.cc")
 
 set(CMN_INC_LIST "${COMMON_INC_DIR}/rocm_smi_device.h")
@@ -170,6 +177,7 @@ set(CMN_INC_LIST ${CMN_INC_LIST} "${COMMON_INC_DIR}/rocm_smi_gpu_metrics.h")
 set(CMN_INC_LIST ${CMN_INC_LIST} "${COMMON_INC_DIR}/rocm_smi.h")
 set(CMN_INC_LIST ${CMN_INC_LIST} "${COMMON_INC_DIR}/rocm_smi_logger.h")
 set(CMN_INC_LIST ${CMN_INC_LIST} "${COMMON_INC_DIR}/rocm_smi_properties.h")
+set(CMN_INC_LIST ${CMN_INC_LIST} "${COMMON_INC_DIR}/rocm_smi_lib_loader.h")
 set(CMN_INC_LIST ${CMN_INC_LIST} "${SHR_MUTEX_DIR}/shared_mutex.h")
 
 ## set components
@@ -187,7 +195,7 @@ set(CPACK_RPM_COMPONENT_INSTALL ON)
 # Add dependencies
 # no rocm-core
 # python doesn't need to be asan
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "python3")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6, python3")
 set(CPACK_DEBIAN_ASAN_PACKAGE_DEPENDS "${CPACK_DEBIAN_PACKAGE_DEPENDS}")
 # Only add dependency on rocm-core if -DROCM_DEP_ROCMCORE=ON is given
 if(ROCM_DEP_ROCMCORE)
@@ -197,8 +205,8 @@ if(ROCM_DEP_ROCMCORE)
     set(CPACK_DEBIAN_ASAN_PACKAGE_DEPENDS "${CPACK_DEBIAN_PACKAGE_DEPENDS}-asan")
 endif()
 # carefully reuse DEB's "DEPENDS" for RPM's "REQUIRES"
-set(CPACK_RPM_PACKAGE_REQUIRES "${CPACK_DEBIAN_PACKAGE_DEPENDS}")
-set(CPACK_RPM_ASAN_PACKAGE_REQUIRES "${CPACK_DEBIAN_ASAN_PACKAGE_DEPENDS}")
+set(CPACK_RPM_PACKAGE_REQUIRES "python3")
+set(CPACK_RPM_ASAN_PACKAGE_REQUIRES "${CPACK_RPM_PACKAGE_REQUIRES}")
 
 #Component Specific Configuration/Flags
 set(CPACK_DEBIAN_DEV_PACKAGE_NAME ${ROCM_SMI_PACKAGE})
@@ -324,12 +332,37 @@ if(DEFINED ENV{CPACK_DEBIAN_PACKAGE_RELEASE})
 else()
    set(CPACK_DEBIAN_PACKAGE_RELEASE "local")
 endif()
-set(CPACK_DEBIAN_PACKAGE_SUGGESTS "sudo")
+set(CPACK_DEBIAN_PACKAGE_SUGGESTS "sudo, libdrm-dev, libdrm-amdgpu-dev")
+set(CPACK_RPM_PACKAGE_SUGGESTS "sudo, libdrm-dev, libdrm-amdgpu-dev")
 
 ## Process the Debian install/remove scripts to update the CPACK variables
-configure_file ( ${CMAKE_CURRENT_SOURCE_DIR}/DEBIAN/postinst.in DEBIAN/postinst @ONLY )
-configure_file ( ${CMAKE_CURRENT_SOURCE_DIR}/DEBIAN/prerm.in DEBIAN/prerm @ONLY )
-set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "DEBIAN/postinst;DEBIAN/prerm")
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/DEBIAN/postinst.in
+    DEBIAN/postinst
+    @ONLY
+    FILE_PERMISSIONS
+    OWNER_READ
+    OWNER_WRITE
+    OWNER_EXECUTE
+    GROUP_READ
+    GROUP_EXECUTE
+    WORLD_READ
+    WORLD_EXECUTE)
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/DEBIAN/prerm.in
+    DEBIAN/prerm
+    @ONLY
+    FILE_PERMISSIONS
+    OWNER_READ
+    OWNER_WRITE
+    OWNER_EXECUTE
+    GROUP_READ
+    GROUP_EXECUTE
+    WORLD_READ
+    WORLD_EXECUTE)
+
+list(APPEND CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${CMAKE_CURRENT_BINARY_DIR}/DEBIAN/postinst"
+     "${CMAKE_CURRENT_BINARY_DIR}/DEBIAN/prerm")
 
 # RPM package specific variables
 set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION "${CPACK_PACKAGING_INSTALL_PREFIX} ${CPACK_PACKAGING_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}" )
@@ -388,3 +421,7 @@ if(NOT BUILD_SHARED_LIBS)
   cpack_add_component_group("static")
   cpack_add_component(dev GROUP static)
 endif()
+
+message("&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
+message("                    CMake ROCm SMI (Library) [root] END            ")
+message("&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")

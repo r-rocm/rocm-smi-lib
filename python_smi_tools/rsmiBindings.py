@@ -54,6 +54,9 @@ class rsmi_status_t(c_int):
     RSMI_STATUS_REFCOUNT_OVERFLOW = 0x11
     RSMI_STATUS_SETTING_UNAVAILABLE = 0x12
     RSMI_STATUS_AMDGPU_RESTART_ERR = 0x13
+    RSMI_STATUS_DRM_ERROR = 0x14
+    RSMI_STATUS_FAIL_LOAD_MODULE = 0x15
+    RSMI_STATUS_FAIL_LOAD_SYMBOL = 0x16
     RSMI_STATUS_UNKNOWN_ERROR = 0xFFFFFFFF
 
 
@@ -79,6 +82,9 @@ rsmi_status_verbose_err_out = {
     rsmi_status_t.RSMI_STATUS_REFCOUNT_OVERFLOW: 'Data overflow - data exceeded INT32_MAX',
     rsmi_status_t.RSMI_STATUS_SETTING_UNAVAILABLE: 'Requested setting is unavailable for current device',
     rsmi_status_t.RSMI_STATUS_AMDGPU_RESTART_ERR: 'Could not successfully restart the amdgpu driver',
+    rsmi_status_t.RSMI_STATUS_DRM_ERROR: 'Error when calling libdrm',
+    rsmi_status_t.RSMI_STATUS_FAIL_LOAD_MODULE: 'Failed to load a library',
+    rsmi_status_t.RSMI_STATUS_FAIL_LOAD_SYMBOL: 'Failed to load a library symbol',
     rsmi_status_t.RSMI_STATUS_UNKNOWN_ERROR: 'Unknown error occured'
 }
 
@@ -642,3 +648,105 @@ rsmi_power_type_dict = {
     1: 'CURRENT SOCKET',
     0xFFFFFFFF: 'INVALID_POWER_TYPE'
 }
+
+class metrics_table_header_t(Structure):
+    pass
+
+# metrics_table_header_t._pack_ = 1 # source:False
+metrics_table_header_t._fields_ = [
+    ('structure_size', c_uint16),
+    ('format_revision', c_uint8),
+    ('content_revision', c_uint8),
+]
+amd_metrics_table_header_t = metrics_table_header_t
+
+class amdgpu_xcp_metrics_t(Structure):
+    pass
+
+# amdgpu_xcp_metrics_t._pack_ = 1 # source:False
+amdgpu_xcp_metrics_t._fields_ = [
+    ('gfx_busy_inst', c_uint32 * 8),
+    ('jpeg_busy', c_uint16 * 32),
+    ('vcn_busy', c_uint16 * 4),
+    ('gfx_busy_acc', c_uint64 * 8),
+    ('gfx_below_host_limit_acc', c_uint64 * 8),
+]
+xcp_stats_t = amdgpu_xcp_metrics_t
+
+class rsmi_gpu_metrics_t(Structure):
+    pass
+
+
+# rsmi_gpu_metrics_t._pack_ = 1  # source:False
+rsmi_gpu_metrics_t._fields_ = [
+    ('common_header', amd_metrics_table_header_t),
+    ('temperature_edge', c_uint16),
+    ('temperature_hotspot', c_uint16),
+    ('temperature_mem', c_uint16),
+    ('temperature_vrgfx', c_uint16),
+    ('temperature_vrsoc', c_uint16),
+    ('temperature_vrmem', c_uint16),
+    ('average_gfx_activity', c_uint16),
+    ('average_umc_activity', c_uint16),
+    ('average_mm_activity', c_uint16),
+    ('average_socket_power', c_uint16),
+    ('energy_accumulator', c_uint64),
+    ('system_clock_counter', c_uint64),
+    ('average_gfxclk_frequency', c_uint16),
+    ('average_socclk_frequency', c_uint16),
+    ('average_uclk_frequency', c_uint16),
+    ('average_vclk0_frequency', c_uint16),
+    ('average_dclk0_frequency', c_uint16),
+    ('average_vclk1_frequency', c_uint16),
+    ('average_dclk1_frequency', c_uint16),
+    ('current_gfxclk', c_uint16),
+    ('current_socclk', c_uint16),
+    ('current_uclk', c_uint16),
+    ('current_vclk0', c_uint16),
+    ('current_dclk0', c_uint16),
+    ('current_vclk1', c_uint16),
+    ('current_dclk1', c_uint16),
+    ('throttle_status', c_uint32),
+    ('current_fan_speed', c_uint16),
+    ('pcie_link_width', c_uint16),
+    ('pcie_link_speed', c_uint16),
+    ('gfx_activity_acc', c_uint32),
+    ('mem_activity_acc', c_uint32),
+    ('temperature_hbm', c_uint16 * 4),
+    ('firmware_timestamp', c_uint64),
+    ('voltage_soc', c_uint16),
+    ('voltage_gfx', c_uint16),
+    ('voltage_mem', c_uint16),
+    ('indep_throttle_status', c_uint64),
+    ('current_socket_power', c_uint16),
+    ('vcn_activity', c_uint16 * 4),
+    ('gfxclk_lock_status', c_uint32),
+    ('xgmi_link_width', c_uint16),
+    ('xgmi_link_speed', c_uint16),
+    ('pcie_bandwidth_acc', c_uint64),
+    ('pcie_bandwidth_inst', c_uint64),
+    ('pcie_l0_to_recov_count_acc', c_uint64),
+    ('pcie_replay_count_acc', c_uint64),
+    ('pcie_replay_rover_count_acc', c_uint64),
+    ('xgmi_read_data_acc', c_uint64 * 8),
+    ('xgmi_write_data_acc', c_uint64 * 8),
+    ('current_gfxclks', c_uint16 * 8),
+    ('current_socclks', c_uint16 * 4),
+    ('current_vclk0s', c_uint16 * 4),
+    ('current_dclk0s', c_uint16 * 4),
+    ('jpeg_activity', c_uint16 * 32),
+    ('pcie_nak_sent_count_acc', c_uint32),
+    ('pcie_nak_rcvd_count_acc', c_uint32),
+    ('accumulation_counter', c_uint64),
+    ('prochot_residency_acc', c_uint64),
+    ('ppt_residency_acc', c_uint64),
+    ('socket_thm_residency_acc', c_uint64),
+    ('vr_thm_residency_acc', c_uint64),
+    ('hbm_thm_residency_acc', c_uint64),
+    ('num_partition', c_uint16),
+    ('xcp_stats', xcp_stats_t * 8),
+    ('pcie_lc_perf_other_end_recovery', c_uint32),
+    ('vram_max_bandwidth', c_uint64),
+    ('xgmi_link_status', c_uint16 * 8),
+]
+amdsmi_gpu_metrics_t = rsmi_gpu_metrics_t

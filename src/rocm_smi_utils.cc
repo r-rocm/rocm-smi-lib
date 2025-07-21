@@ -63,6 +63,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <cmath>
 
 #include "rocm_smi/rocm_smi.h"
 #include "rocm_smi/rocm_smi_utils.h"
@@ -170,6 +171,24 @@ int isRegularFile(std::string fname, bool *is_reg) {
   }
 
   return 0;
+}
+
+int isReadOnlyForAll(const std::string& fname, bool *is_read_only){
+  struct stat file_stat;
+  int ret;
+
+  ret = stat(fname.c_str(), &file_stat);
+  if (ret) {
+    return errno;
+  }
+
+  if (is_read_only != nullptr) {
+    *is_read_only = (file_stat.st_mode & (S_IRUSR | S_IRGRP | S_IROTH)) && !(file_stat.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH));
+  } else {
+    ret = 1;
+  }
+
+  return ret;
 }
 
 int WriteSysfsStr(std::string path, std::string val) {
@@ -325,6 +344,7 @@ rsmi_status_t ErrnoToRsmiStatus(int err) {
     case EIO:    return RSMI_STATUS_UNEXPECTED_SIZE;
     case ENXIO:  return RSMI_STATUS_UNEXPECTED_DATA;
     case EBUSY:  return RSMI_STATUS_BUSY;
+    case EINVAL: return RSMI_STATUS_INVALID_ARGS;
     default:     return RSMI_STATUS_UNKNOWN_ERROR;
   }
 }
@@ -397,14 +417,14 @@ std::pair<bool, std::string> executeCommand(std::string command, bool stdOut) {
   char buffer[128];
   std::string stdoutAndErr;
   bool successfulRun = true;
-  command = "stdbuf -i0 -o0 -e0 " + command; // remove stdOut and err buffering
+  command = "stdbuf -i0 -o0 -e0 " + command;  // remove stdOut and err buffering
 
   FILE *pipe = popen(command.c_str(), "r");
   if (!pipe) {
     stdoutAndErr = "[ERROR] popen failed to call " + command;
     successfulRun = false;
   } else {
-    //read until end of process
+    // read until end of process
     while (!feof(pipe)) {
       // use buffer to read and add to stdoutAndErr
       if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
@@ -427,8 +447,19 @@ std::pair<bool, std::string> executeCommand(std::string command, bool stdOut) {
 
 // originalString - string to search for substring
 // substring - string looking to find
-bool containsString(std::string originalString, std::string substring) {
-  return (originalString.find(substring) != std::string::npos);
+// displayComparisons = defaults to false, set to true to see debug prints
+bool containsString(std::string originalString, std::string substring,
+                  bool displayComparisons) {
+  std::ostringstream ss;
+  bool found = originalString.find(substring) != std::string::npos;
+  if (displayComparisons) {
+    ss << __PRETTY_FUNCTION__
+       << " | originalString: " << originalString
+       << " | substring: " << substring
+       << " | found: " << (found ? "True": "False");
+    LOG_TRACE(ss);
+  }
+  return found;
 }
 
 // Creates and stores supplied data into a temporary file (within /tmp/).
@@ -1162,9 +1193,13 @@ rsmi_status_t rsmi_get_gfx_target_version(uint32_t dv_ind, std::string *gfx_vers
     // separate out parts -> put back into normal graphics version format
     major = static_cast<uint64_t>((orig_target_version / 10000) * 100);
     minor = static_cast<uint64_t>((orig_target_version % 10000 / 100) * 10);
-    if (minor == 0) major *= 10;  // 0 as a minor is correct, but bump up by 10
     rev = static_cast<uint64_t>(orig_target_version % 100);
-    *gfx_version = "gfx" + std::to_string(major + minor + rev);
+
+    ss << std::hex << rev;
+    std::string revision = ss.str();
+    *gfx_version = "gfx" + std::to_string((major + minor)/10) + revision;
+
+    ss.str("");
     ss << __PRETTY_FUNCTION__
     << " | " << std::dec << "kfd_target_version = " << orig_target_version
     << "; major = " << major << "; minor = " << minor << "; rev = "
@@ -1204,6 +1239,52 @@ std::queue<std::string> getAllDeviceGfxVers() {
   return deviceGfxVersions;
 }
 
+// milli_seconds: time to wait, in milliseconds
+// 1 sec = 1000ms
+// .5 sec = 500ms
+void system_wait(int milli_seconds) {
+  std::ostringstream ss;
+  auto start = std::chrono::high_resolution_clock::now();
+  // 1 ms = 1000 us
+  int waitTime = milli_seconds * 1000;
+  ss << __PRETTY_FUNCTION__ << " | "
+     << "** Waiting for " << std::dec << waitTime
+     << " us (" << waitTime/1000 << " milli-seconds) **";
+  LOG_DEBUG(ss);
+  usleep(waitTime);
+  auto stop = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+  ss << __PRETTY_FUNCTION__ << " | "
+     << "** Waiting took " << duration.count() / 1000
+     << " milli-seconds **";
+  LOG_DEBUG(ss);
+}
+
+int countDigit(uint64_t n) {
+  return static_cast<int>(std::floor(log10(n) + 1));
+}
+
+std::string find_file_in_folder(const std::string& folder,
+               const std::string& regex) {
+  std::string file_name;
+  // TODO(amdsmi_dev): The closedir function has some non-standard attributes
+  // that are being ignored here which is causing a warning to be thrown
+  using dir_ptr = std::unique_ptr<DIR, decltype(&closedir)>;
+
+  struct dirent *dir = nullptr;
+  std::regex file_regex(regex);
+  auto drm_dir = dir_ptr(opendir(folder.c_str()), &closedir);
+  if (drm_dir == nullptr) return file_name;
+  std::cmatch m;
+  while ((dir = readdir(drm_dir.get())) != NULL) {
+    if (std::regex_search(dir->d_name, m, file_regex)) {
+        file_name = dir->d_name;
+        break;
+    }
+  }
+  return file_name;
+}
 
 }  // namespace smi
 }  // namespace amd
