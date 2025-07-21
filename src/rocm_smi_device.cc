@@ -128,6 +128,7 @@ static const char *kDevAvailableComputePartitionFName =
                   "available_compute_partition";
 static const char *kDevComputePartitionFName = "current_compute_partition";
 static const char *kDevMemoryPartitionFName = "current_memory_partition";
+static const char *kDevAvailableMemoryPartitionFName = "available_memory_partition";
 
 // Firmware version files
 static const char *kDevFwVersionAsdFName = "fw_version/asd_fw_version";
@@ -306,6 +307,7 @@ static const std::map<DevInfoTypes, const char *> kDevAttribNameMap = {
     {kDevAvailableComputePartition, kDevAvailableComputePartitionFName},
     {kDevComputePartition, kDevComputePartitionFName},
     {kDevMemoryPartition, kDevMemoryPartitionFName},
+    {kDevAvailableMemoryPartition, kDevAvailableMemoryPartitionFName},
 };
 
 static const std::map<rsmi_dev_perf_level, const char *> kDevPerfLvlMap = {
@@ -452,6 +454,7 @@ Device::devInfoTypesStrings = {
   {kDevAvailableComputePartition, "kDevAvailableComputePartition"},
   {kDevComputePartition, "kDevComputePartition"},
   {kDevMemoryPartition, "kDevMemoryPartition"},
+  {kDevAvailableMemoryPartition, "kDevAvailableMemoryPartition"},
 };
 
 static const std::map<const char *, dev_depends_t> kDevFuncDependsMap = {
@@ -658,6 +661,17 @@ int Device::openDebugFileStream(DevInfoTypes type, T *fs, const char *str) {
   return 0;
 }
 
+// The fallback sysfs to handle backward compatibilities
+static const std::map<DevInfoTypes, std::string> kDevFallbackFile = {
+  {kDevErrCntGFX, "ras/aca_gfx"},
+  {kDevErrCntSDMA, "ras/aca_sdma"},
+  {kDevErrCntUMC, "ras/aca_umc"},
+  {kDevErrCntMMHUB, "ras/aca_mmhub"},
+  {kDevErrCntPCIEBIF, "ras/aca_pcie_bif"},
+  {kDevErrCntHDP, "ras/aca_hdp"},
+  {kDevErrCntXGMIWAFL, "ras/aca_xgmi_wafl"},
+};
+
 template <typename T>
 int Device::openSysfsFileStream(DevInfoTypes type, T *fs, const char *str) {
   auto sysfs_path = path_;
@@ -677,19 +691,42 @@ int Device::openSysfsFileStream(DevInfoTypes type, T *fs, const char *str) {
   bool reg_file;
 
   int ret = isRegularFile(sysfs_path, &reg_file);
+
+  if (ret != 0 || !reg_file) {
+    // Handle specific types if the file does not exist
+    if (kDevFallbackFile.find(type) != kDevFallbackFile.end()) {
+
+      sysfs_path = path_ + "/device/" + kDevFallbackFile.at(type);
+      DBG_FILE_ERROR(sysfs_path, str);
+
+      // Recheck the adjusted path
+      ret = isRegularFile(sysfs_path, &reg_file);
+      if (ret != 0 || !reg_file) {
+        ss << __PRETTY_FUNCTION__
+           << " | Adjusted file path also does not exist - SYSFS file ("
+           << sysfs_path
+           << ") for DevInfoInfoType (" << get_type_string(type)
+           << "), returning " << std::to_string(ret);
+        LOG_ERROR(ss);
+        return ret;
+      }
+    }
+  }
+
   if (ret != 0) {
     ss << __PRETTY_FUNCTION__ << " | Issue: File did not exist - SYSFS file ("
        << sysfs_path
-       << ") for DevInfoInfoType (" << devInfoTypesStrings.at(type)
+       << ") for DevInfoInfoType (" << get_type_string(type)
        << "), returning " << std::to_string(ret);
     LOG_ERROR(ss);
     return ret;
   }
+
   if (!reg_file) {
     ss << __PRETTY_FUNCTION__
        << " | Issue: File is not a regular file - SYSFS file ("
        << sysfs_path << ") for "
-       << "DevInfoInfoType (" << devInfoTypesStrings.at(type) << "),"
+       << "DevInfoInfoType (" << get_type_string(type) << "),"
        << " returning ENOENT (" << std::strerror(ENOENT) << ")";
     LOG_ERROR(ss);
     return ENOENT;
@@ -700,7 +737,7 @@ int Device::openSysfsFileStream(DevInfoTypes type, T *fs, const char *str) {
   if (!fs->is_open()) {
     ss << __PRETTY_FUNCTION__
        << " | Issue: Could not open - SYSFS file (" << sysfs_path << ") for "
-       << "DevInfoInfoType (" << devInfoTypesStrings.at(type) << "), "
+       << "DevInfoTypes (" << get_type_string(type) << "), "
        << ", returning " << std::to_string(errno) << " ("
        << std::strerror(errno) << ")";
     LOG_ERROR(ss);
@@ -709,7 +746,7 @@ int Device::openSysfsFileStream(DevInfoTypes type, T *fs, const char *str) {
 
   ss << __PRETTY_FUNCTION__ << " | Successfully opened SYSFS file ("
      << sysfs_path
-     << ") for DevInfoInfoType (" << devInfoTypesStrings.at(type)
+     << ") for DevInfoTypes (" << get_type_string(type)
      << ")";
   LOG_INFO(ss);
   return 0;
@@ -726,7 +763,7 @@ int Device::readDebugInfoStr(DevInfoTypes type, std::string *retStr) {
   ret = openDebugFileStream(type, &fs);
   if (ret != 0) {
     ss << "Could not read debugInfoStr for DevInfoType ("
-     << devInfoTypesStrings.at(type)<< "), returning "
+     << get_type_string(type) << "), returning "
      << std::to_string(ret);
     LOG_ERROR(ss);
     return ret;
@@ -740,7 +777,7 @@ int Device::readDebugInfoStr(DevInfoTypes type, std::string *retStr) {
   fs.close();
 
   ss << "Successfully read debugInfoStr for DevInfoType ("
-     << devInfoTypesStrings.at(type)<< "), retString= " << *retStr;
+     << get_type_string(type) << "), retString= " << *retStr;
   LOG_INFO(ss);
 
   return 0;
@@ -756,7 +793,7 @@ int Device::readDevInfoStr(DevInfoTypes type, std::string *retStr) {
   ret = openSysfsFileStream(type, &fs);
   if (ret != 0) {
     ss << "Could not read device info string for DevInfoType ("
-     << devInfoTypesStrings.at(type) << "), returning "
+     << get_type_string(type) << "), returning "
      << std::to_string(ret);
     LOG_ERROR(ss);
     return ret;
@@ -765,8 +802,8 @@ int Device::readDevInfoStr(DevInfoTypes type, std::string *retStr) {
   fs >> *retStr;
   fs.close();
   ss << __PRETTY_FUNCTION__
-     << "Successfully read device info string for DevInfoType (" <<
-            devInfoTypesStrings.at(type) << "): " + *retStr
+     << "Successfully read device info string for DevInfoType ("
+     << get_type_string(type) << "): " + *retStr
      << " | "
      << (fs.is_open() ? " File stream is opened" : " File stream is closed")
      << " | " << (fs.bad() ? "[ERROR] Bad read operation" :
@@ -801,7 +838,7 @@ int Device::writeDevInfoStr(DevInfoTypes type, std::string valStr,
     fs.close();
     ss << __PRETTY_FUNCTION__ << " | Issue: Could not open fileStream; "
        << "Could not write device info string (" << valStr
-       << ") for DevInfoType (" << devInfoTypesStrings.at(type)
+       << ") for DevInfoType (" << get_type_string(type)
        << "), returning " << std::to_string(ret);
     LOG_ERROR(ss);
     return ret;
@@ -812,7 +849,7 @@ int Device::writeDevInfoStr(DevInfoTypes type, std::string valStr,
     fs.flush();
     fs.close();
     ss << "Successfully wrote device info string (" << valStr
-       << ") for DevInfoType (" << devInfoTypesStrings.at(type)
+       << ") for DevInfoType (" << get_type_string(type)
        << "), returning RSMI_STATUS_SUCCESS";
     LOG_INFO(ss);
     ret = RSMI_STATUS_SUCCESS;
@@ -826,7 +863,7 @@ int Device::writeDevInfoStr(DevInfoTypes type, std::string valStr,
     fs.close();
     ss << __PRETTY_FUNCTION__ << " | Issue: Could not write to file; "
        << "Could not write device info string (" << valStr
-       << ") for DevInfoType (" << devInfoTypesStrings.at(type)
+       << ") for DevInfoType (" << get_type_string(type)
        << "), returning " << getRSMIStatusString(ErrnoToRsmiStatus(ret));
     ss << " | "
        << (fs.is_open() ? "[ERROR] File stream open" :
@@ -913,18 +950,27 @@ int Device::readDevInfoLine(DevInfoTypes type, std::string *line) {
   ret = openSysfsFileStream(type, &fs);
   if (ret != 0) {
     ss << "Could not read DevInfoLine for DevInfoType ("
-       << devInfoTypesStrings.at(type) << ")";
+       << get_type_string(type) << ")";
     LOG_ERROR(ss);
     return ret;
   }
 
   std::getline(fs, *line);
   ss << "Successfully read DevInfoLine for DevInfoType ("
-     << devInfoTypesStrings.at(type) << "), returning *line = "
+     << get_type_string(type) << "), returning *line = "
      << *line;
   LOG_INFO(ss);
 
   return 0;
+}
+
+const char* Device::get_type_string(DevInfoTypes type) {
+  auto ite = devInfoTypesStrings.find(type);
+  if (ite != devInfoTypesStrings.end()) {
+    return ite->second;
+  }
+
+  return "Unknown";
 }
 
 int Device::readDevInfoBinary(DevInfoTypes type, std::size_t b_size,
@@ -939,7 +985,7 @@ int Device::readDevInfoBinary(DevInfoTypes type, std::size_t b_size,
   ptr = fopen(sysfs_path.c_str(), "rb");
   if (!ptr) {
     ss << "Could not read DevInfoBinary for DevInfoType ("
-       << devInfoTypesStrings.at(type) << ")"
+       << get_type_string(type) << ")"
        << " - SYSFS (" << sysfs_path << ")"
        << ", returning " << std::to_string(errno) << " ("
        << std::strerror(errno) << ")";
@@ -951,7 +997,7 @@ int Device::readDevInfoBinary(DevInfoTypes type, std::size_t b_size,
   fclose(ptr);
   if ((num*b_size) != b_size) {
     ss << "Could not read DevInfoBinary for DevInfoType ("
-       << devInfoTypesStrings.at(type) << ") - SYSFS ("
+       << get_type_string(type) << ") - SYSFS ("
        << sysfs_path << "), binary size error; "
        << "[buff: "
        << p_binary_data
@@ -964,15 +1010,17 @@ int Device::readDevInfoBinary(DevInfoTypes type, std::size_t b_size,
     LOG_ERROR(ss);
     return ENOENT;
   }
-  ss << "Successfully read DevInfoBinary for DevInfoType ("
-     << devInfoTypesStrings.at(type) << ") - SYSFS ("
-     << sysfs_path << "), returning binaryData = " << p_binary_data
-     << "; byte_size = " << std::dec << static_cast<int>(b_size);
+  if (ROCmLogging::Logger::getInstance()->isLoggerEnabled()) {
+    ss << "Successfully read DevInfoBinary for DevInfoType ("
+       << get_type_string(type) << ") - SYSFS ("
+       << sysfs_path << "), returning binaryData = " << p_binary_data
+       << "; byte_size = " << std::dec << static_cast<int>(b_size);
 
-  std::string metricDescription = "AMD SMI GPU METRICS (16-byte width), "
+    std::string metricDescription = "AMD SMI GPU METRICS (16-byte width), "
                                   + sysfs_path;
-  logHexDump(metricDescription.c_str(), p_binary_data, b_size, 16);
-  LOG_INFO(ss);
+    logHexDump(metricDescription.c_str(), p_binary_data, b_size, 16);
+    LOG_INFO(ss);
+  }
   return 0;
 }
 
@@ -997,7 +1045,7 @@ int Device::readDevInfoMultiLineStr(DevInfoTypes type,
 
   if (retVec->empty()) {
     ss << "Read devInfoMultiLineStr for DevInfoType ("
-       << devInfoTypesStrings.at(type) << ")"
+       << get_type_string(type) << ")"
        << ", but contained no string lines";
     LOG_ERROR(ss);
     return ENXIO;
@@ -1015,12 +1063,12 @@ int Device::readDevInfoMultiLineStr(DevInfoTypes type,
 
   if (!allLines.empty()) {
     ss << "Successfully read devInfoMultiLineStr for DevInfoType ("
-       << devInfoTypesStrings.at(type) << ") "
+       << get_type_string(type) << ") "
        << ", returning lines read = " << allLines;
     LOG_INFO(ss);
   } else {
     ss << "Read devInfoMultiLineStr for DevInfoType ("
-       << devInfoTypesStrings.at(type) << ")"
+       << get_type_string(type) << ")"
        << ", but lines were empty";
     LOG_INFO(ss);
     return ENXIO;
@@ -1191,6 +1239,7 @@ int Device::readDevInfo(DevInfoTypes type, std::string *val) {
     case kDevMemoryPartition:
     case kDevNumaNode:
     case kDevXGMIPhysicalID:
+    case kDevAvailableMemoryPartition:
       return readDevInfoStr(type, val);
       break;
 
@@ -1368,39 +1417,125 @@ bool Device::DeviceAPISupported(std::string name, uint64_t variant,
 
 rsmi_status_t Device::restartAMDGpuDriver(void) {
   REQUIRE_ROOT_ACCESS
+  std::ostringstream ss;
   bool restartSuccessful = true;
   bool success = false;
   std::string out;
   bool wasGdmServiceActive = false;
+  bool restartInProgress = true;
+  bool isRestartInProgress = true;
+  bool isAMDGPUModuleLive = false;
+  bool restartGDM = false;
+  std::string captureRestartErr;
+  const int kTimeToWaitForDriverMSec = 1000;
 
   // sudo systemctl is-active gdm
   // we do not care about the success of checking if gdm is active
-  std::tie(success, out) = executeCommand("systemctl is-active gdm");
-  (out == "active") ? (restartSuccessful &= success) :
-                         (restartSuccessful = true);
+  std::tie(success, out) = executeCommand("systemctl is-active gdm", true);
+  (out == "active") ? (restartGDM = true) : (restartGDM = false);
+  ss << __PRETTY_FUNCTION__ << " | systemctl is-active gdm: out = "
+     << out << "; success = " << (success ? "True" : "False");
+  LOG_INFO(ss);
 
   // if gdm is active -> sudo systemctl stop gdm
-  // TODO: are are there other display manager's we need to take into account?
-  // see https://en.wikipedia.org/wiki/GNOME_Display_Manager
-  if (success && (out == "active")) {
+  // TODO(AMD_SMI_team): are are there other display manager's we need to take into account?
+  // see https://help.gnome.org/admin/gdm/stable/overview.html.en_GB
+  if (success && (out == "active") && (restartGDM)) {
     wasGdmServiceActive = true;
-    std::tie(success, out) = executeCommand("systemctl stop gdm&", false);
-    restartSuccessful &= success;
+    std::tie(success, out) = executeCommand("systemctl stop gdm&", true);
+    ss << __PRETTY_FUNCTION__ << " | systemctl stop gdm&: out = "
+    << out << "; success = " << (success ? "True" : "False");
+    LOG_INFO(ss);
+  } else {
+    success = true;  // ignore failures to restart gdm
   }
+
+  ss << __PRETTY_FUNCTION__ << " | B4 modprobing anything!!! out = "
+     << out << "; success = " << (success ? "True" : "False")
+     << "; restartSuccessful = " << (restartSuccessful ? "True" : "False")
+     << "; captureRestartErr = " << captureRestartErr;
+  LOG_INFO(ss);
 
   // sudo modprobe -r amdgpu
   // sudo modprobe amdgpu
-  std::tie(success, out) =
-    executeCommand("modprobe -r amdgpu && modprobe amdgpu&", false);
+  std::tie(success, out) = executeCommand(
+    "modprobe -r -v amdgpu >/dev/null 2>&1 && modprobe -v amdgpu >/dev/null 2>&1", true);
   restartSuccessful &= success;
+  captureRestartErr = out;
+  ss << __PRETTY_FUNCTION__ << " | modprobe -r -v amdgpu && modprobe -v amdgpu: out = "
+     << out << "; success = " << (success ? "True" : "False")
+     << "; restartSuccessful = " << (restartSuccessful ? "True" : "False")
+     << "; captureRestartErr = " << captureRestartErr;
+  LOG_INFO(ss);
 
   // if gdm was active -> sudo systemctl start gdm
-  if (wasGdmServiceActive) {
-    std::tie(success, out) = executeCommand("systemctl start gdm&", false);
-    restartSuccessful &= success;
+  // We don't care if successful or not, just try to restart as a courtesy
+  if (wasGdmServiceActive && restartGDM) {
+    std::tie(success, out) = executeCommand("systemctl start gdm&", true);
+    ss << __PRETTY_FUNCTION__ << " | systemctl start gdm&: out = "
+    << out << "; success = " << (success ? "True" : "False");
+    LOG_INFO(ss);
   }
 
-  return (restartSuccessful ? RSMI_STATUS_SUCCESS :
+  // Return early if there was an issue restarting amdgpu
+  if (!restartSuccessful) {
+    ss << __PRETTY_FUNCTION__ << " | [WARNING] Issue found during amdgpu restart: "
+    << captureRestartErr << "; retartSuccessful: " << (restartSuccessful ? "True" : "False");
+    LOG_INFO(ss);
+    return RSMI_STATUS_AMDGPU_RESTART_ERR;
+  }
+
+  // wait for amdgpu module to come back up
+  rsmi_status_t status = Device::isRestartInProgress(&isRestartInProgress,
+                                                    &isAMDGPUModuleLive);
+  int maxLoops = 10;  // wait a max of 10 sec
+  while (status != RSMI_STATUS_SUCCESS) {
+    maxLoops -= 1;
+    if (maxLoops == 0) {
+      break;
+    }
+    amd::smi::system_wait(kTimeToWaitForDriverMSec);
+    status = Device::isRestartInProgress(&isRestartInProgress,
+                                         &isAMDGPUModuleLive);
+  }
+
+  return ((restartSuccessful && (!isRestartInProgress && isAMDGPUModuleLive)) ?
+          RSMI_STATUS_SUCCESS :
+          RSMI_STATUS_AMDGPU_RESTART_ERR);
+}
+
+rsmi_status_t Device::isRestartInProgress(bool *isRestartInProgress,
+                                          bool *isAMDGPUModuleLive) {
+  REQUIRE_ROOT_ACCESS
+  std::ostringstream ss;
+  bool restartSuccessful = true;
+  bool success = false;
+  std::string out;
+  bool deviceRestartInProgress = true;    // Assume in progress, we intend to disprove
+  bool isSystemAMDGPUModuleLive = false;  // Assume AMD GPU module is not live,
+                                          //  we intend to disprove
+
+  // wait for amdgpu module to come back up
+  std::tie(success, out) = executeCommand("cat /sys/module/amdgpu/initstate", true);
+  ss << __PRETTY_FUNCTION__
+     << " | success = " << (success ? "True" : "False")
+     << " | out = " << out;
+  LOG_DEBUG(ss);
+  if ((success == true) && (!out.empty())) {
+    isSystemAMDGPUModuleLive = containsString(out, "live");
+  }
+  if (isAMDGPUModuleLive) {
+    deviceRestartInProgress = false;
+  }
+  *isRestartInProgress = deviceRestartInProgress;
+  *isAMDGPUModuleLive = isSystemAMDGPUModuleLive;
+  ss << __PRETTY_FUNCTION__
+     << " | *isRestartInProgress = " << (*isRestartInProgress ? "True":"False")
+     << " | *isAMDGPUModuleLive = " << (*isAMDGPUModuleLive ? "True":"False")
+     << " | out = " << out;
+  LOG_DEBUG(ss);
+
+  return ((*isAMDGPUModuleLive && !*isRestartInProgress) ? RSMI_STATUS_SUCCESS :
           RSMI_STATUS_AMDGPU_RESTART_ERR);
 }
 
@@ -1526,6 +1661,57 @@ std::string Device::readBootPartitionState<rsmi_memory_partition_type_t>(
   std::tie(std::ignore, boot_state) = readTmpFile(dv_ind, "boot",
                                                   "memory_partition");
   return boot_state;
+}
+
+rsmi_status_t Device::get_smi_device_identifiers(uint32_t device_id,
+        rsmi_device_identifiers_t *device_identifiers) {
+  bool found_device = false;
+  std::ostringstream ss;
+  rsmi_status_t ret = RSMI_STATUS_NOT_SUPPORTED;
+  if (device_identifiers == nullptr) {
+    return RSMI_STATUS_INVALID_ARGS;
+  }
+
+  amd::smi::RocmSMI& smi = amd::smi::RocmSMI::getInstance();
+  auto devices = smi.devices();
+  ss << __PRETTY_FUNCTION__ << " | device_id = " << device_id
+     << "; devices.size() = " << devices.size();
+  // std::cout << ss.str() << "\n";
+  LOG_DEBUG(ss);
+
+  for (uint32_t i = 0; i < devices.size(); i++) {
+    if (i != device_id) {
+      continue;
+    }
+
+    device_identifiers->card_index = devices[i]->index();
+    device_identifiers->drm_render_minor = devices[i]->drm_render_minor();
+    device_identifiers->bdfid = devices[i]->bdfid();
+    device_identifiers->kfd_gpu_id = devices[i]->kfd_gpu_id();
+    uint32_t temp_partition_id = 0;
+    rsmi_status_t ret = rsmi_dev_partition_id_get(
+        i, &temp_partition_id);
+    if (ret != RSMI_STATUS_SUCCESS) {
+      temp_partition_id = 0;
+    }
+    device_identifiers->partition_id = temp_partition_id;
+    device_identifiers->smi_device_id = i;
+    found_device = true;
+    ss << __PRETTY_FUNCTION__ << " | Found device: "
+       << "card_index = " << device_identifiers->card_index
+       << "; drm_render_minor = " << device_identifiers->drm_render_minor
+       << "; bdfid = " << std::hex << "0x" << device_identifiers->bdfid
+       << "; kfd_gpu_id = " << std::dec << device_identifiers->kfd_gpu_id
+       << "; partition_id = " << device_identifiers->partition_id
+       << "; smi_device_id = " << device_identifiers->smi_device_id;
+    // std::cout << ss.str() << "\n";
+    LOG_DEBUG(ss);
+    break;
+  }
+  if (found_device) {
+    ret = RSMI_STATUS_SUCCESS;
+  }
+  return ret;
 }
 
 

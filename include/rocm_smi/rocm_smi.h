@@ -40,6 +40,7 @@
  * DEALINGS WITH THE SOFTWARE.
  *
  */
+
 #ifndef ROCM_SMI_ROCM_SMI_H_
 #define ROCM_SMI_ROCM_SMI_H_
 
@@ -132,6 +133,9 @@ typedef enum {
                                          //!< for the current device
   RSMI_STATUS_AMDGPU_RESTART_ERR,        //!< Could not successfully restart
                                          //!< the amdgpu driver
+  RSMI_STATUS_DRM_ERROR,                 //!< Error when call libdrm
+  RSMI_STATUS_FAIL_LOAD_MODULE,          //!< Fail to load lib
+  RSMI_STATUS_FAIL_LOAD_SYMBOL,          //!< Fail to load symbol
 
   RSMI_STATUS_UNKNOWN_ERROR = 0xFFFFFFFF,  //!< An unknown error occurred
 } rsmi_status_t;
@@ -317,9 +321,15 @@ typedef enum {
   RSMI_EVT_NOTIF_THERMAL_THROTTLE = KFD_SMI_EVENT_THERMAL_THROTTLE,
   RSMI_EVT_NOTIF_GPU_PRE_RESET = KFD_SMI_EVENT_GPU_PRE_RESET,
   RSMI_EVT_NOTIF_GPU_POST_RESET = KFD_SMI_EVENT_GPU_POST_RESET,
-  RSMI_EVT_NOTIF_RING_HANG = KFD_SMI_EVENT_RING_HANG,
-
-  RSMI_EVT_NOTIF_LAST = RSMI_EVT_NOTIF_RING_HANG
+  RSMI_EVT_NOTIF_EVENT_MIGRATE_START =  KFD_SMI_EVENT_MIGRATE_START,
+  RSMI_EVT_NOTIF_EVENT_MIGRATE_END = KFD_SMI_EVENT_MIGRATE_END,
+  RSMI_EVT_NOTIF_EVENT_PAGE_FAULT_START = KFD_SMI_EVENT_PAGE_FAULT_START,
+  RSMI_EVT_NOTIF_EVENT_PAGE_FAULT_END = KFD_SMI_EVENT_PAGE_FAULT_END,
+  RSMI_EVT_NOTIF_EVENT_QUEUE_EVICTION = KFD_SMI_EVENT_QUEUE_EVICTION,
+  RSMI_EVT_NOTIF_EVENT_QUEUE_RESTORE = KFD_SMI_EVENT_QUEUE_RESTORE,
+  RSMI_EVT_NOTIF_EVENT_UNMAP_FROM_GPU = KFD_SMI_EVENT_UNMAP_FROM_GPU,
+  RSMI_EVT_NOTIF_EVENT_ALL_PROCESS = KFD_SMI_EVENT_ALL_PROCESS,
+  RSMI_EVT_NOTIF_LAST = KFD_SMI_EVENT_ALL_PROCESS
 } rsmi_evt_notification_type_t;
 
 /**
@@ -328,7 +338,8 @@ typedef enum {
 #define RSMI_EVENT_MASK_FROM_INDEX(i) (1ULL << ((i) - 1))
 
 //! Maximum number of characters an event notification message will be
-#define MAX_EVENT_NOTIFICATION_MSG_SIZE 64
+// matches kfd message max size
+#define MAX_EVENT_NOTIFICATION_MSG_SIZE 96
 
 /**
  * Event notification data returned from event notification API
@@ -926,10 +937,6 @@ typedef struct metrics_table_header_t metrics_table_header_t;
 /// \endcond
 
 /**
- * @brief The following structure holds the gpu metrics values for a device.
- */
-
-/**
  * @brief Unit conversion factor for HBM temperatures
  */
 #define CENTRIGRADE_TO_MILLI_CENTIGRADE 1000
@@ -964,6 +971,50 @@ typedef struct metrics_table_header_t metrics_table_header_t;
  */
 #define RSMI_MAX_NUM_GFX_CLKS 8
 
+/**
+ * @brief This should match kRSMI_MAX_NUM_XCC;
+ * XCC - Accelerated Compute Core, the collection of compute units,
+ * ACE (Asynchronous Compute Engines), caches,
+ * and global resources organized as one unit.
+ *
+ * Refer to amd.com documentation for more detail:
+ * https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/white-papers/amd-cdna-3-white-paper.pdf
+ */
+#define RSMI_MAX_NUM_XCC 8
+
+/**
+ * @brief This should match kRSMI_MAX_NUM_XCP;
+ * XCP - Accelerated Compute Processor,
+ * also referred to as the Graphics Compute Partitions.
+ * Each physical gpu could have a maximum of 8 separate partitions
+ * associated with each (depending on ASIC support).
+ *
+ * Refer to amd.com documentation for more detail:
+ * https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/white-papers/amd-cdna-3-white-paper.pdf
+ */
+#define RSMI_MAX_NUM_XCP 8
+
+/**
+ * @brief The following structures hold the gpu statistics for a device.
+ */
+struct amdgpu_xcp_metrics_t {
+  /*
+  * v1.6 additions
+  */
+  /* Utilization Instantaneous (%) */
+  uint32_t gfx_busy_inst[RSMI_MAX_NUM_XCC];
+  uint16_t jpeg_busy[RSMI_MAX_NUM_JPEG_ENGS];
+  uint16_t vcn_busy[RSMI_MAX_NUM_VCNS];
+
+  /* Utilization Accumulated (%) */
+  uint64_t gfx_busy_acc[RSMI_MAX_NUM_XCC];
+
+  /*
+  * v1.7 additions
+  */
+  /* Total App Clock Counter Accumulated */
+  uint64_t gfx_below_host_limit_acc[RSMI_MAX_NUM_XCC];
+};
 
 typedef struct {
   // TODO(amd) Doxygen documents
@@ -985,7 +1036,7 @@ typedef struct {
    */
   struct metrics_table_header_t common_header;
 
-  // Temperature
+  // Temperature (C)
   uint16_t temperature_edge;
   uint16_t temperature_hotspot;
   uint16_t temperature_mem;
@@ -993,19 +1044,19 @@ typedef struct {
   uint16_t temperature_vrsoc;
   uint16_t temperature_vrmem;
 
-  // Utilization
+  // Utilization (%)
   uint16_t average_gfx_activity;
   uint16_t average_umc_activity;    // memory controller
   uint16_t average_mm_activity;     // UVD or VCN
 
-  // Power/Energy
+  // Power (W) /Energy (15.259uJ per 1ns)
   uint16_t average_socket_power;
   uint64_t energy_accumulator;      // v1 mod. (32->64)
 
   // Driver attached timestamp (in ns)
   uint64_t system_clock_counter;    // v1 mod. (moved from top of struct)
 
-  // Average clocks
+  // Average clocks (MHz)
   uint16_t average_gfxclk_frequency;
   uint16_t average_socclk_frequency;
   uint16_t average_uclk_frequency;
@@ -1014,7 +1065,7 @@ typedef struct {
   uint16_t average_vclk1_frequency;
   uint16_t average_dclk1_frequency;
 
-  // Current clocks
+  // Current clocks (MHz)
   uint16_t current_gfxclk;
   uint16_t current_socclk;
   uint16_t current_uclk;
@@ -1026,10 +1077,10 @@ typedef struct {
   // Throttle status
   uint32_t throttle_status;
 
-  // Fans
+  // Fans (RPM)
   uint16_t current_fan_speed;
 
-  // Link width/speed
+  // Link width (number of lanes) /speed (0.1 GT/s)
   uint16_t pcie_link_width;         // v1 mod.(8->16)
   uint16_t pcie_link_speed;         // in 0.1 GT/s; v1 mod. (8->16)
 
@@ -1045,7 +1096,7 @@ typedef struct {
   /*
    * v1.2 additions
    */
-	// PMFW attached timestamp (10ns resolution)
+  // PMFW attached timestamp (10ns resolution)
   uint64_t firmware_timestamp;
 
 
@@ -1068,19 +1119,19 @@ typedef struct {
   uint16_t current_socket_power;
 
   // Utilization (%)
-  uint16_t vcn_activity[RSMI_MAX_NUM_VCNS]; // VCN instances activity percent (encode/decode)
+  uint16_t vcn_activity[RSMI_MAX_NUM_VCNS];  // VCN instances activity percent (encode/decode)
 
   // Clock Lock Status. Each bit corresponds to clock instance
   uint32_t gfxclk_lock_status;
 
-	// XGMI bus width and bitrate (in Gbps)
+  // XGMI bus width and bitrate (in GB/s)
   uint16_t xgmi_link_width;
   uint16_t xgmi_link_speed;
 
   // PCIE accumulated bandwidth (GB/sec)
   uint64_t pcie_bandwidth_acc;
 
-	// PCIE instantaneous bandwidth (GB/sec)
+  // PCIE instantaneous bandwidth (GB/sec)
   uint64_t pcie_bandwidth_inst;
 
   // PCIE L0 to recovery state transition accumulated count
@@ -1114,6 +1165,66 @@ typedef struct {
   // PCIE NAK received accumulated count
   uint32_t pcie_nak_rcvd_count_acc;
 
+  /*
+   * v1.6 additions
+   */
+  /* Accumulation cycle counter */
+  uint64_t accumulation_counter;
+
+  /**
+   * Accumulated throttler residencies
+   */
+  uint64_t prochot_residency_acc;
+  /**
+   * Accumulated throttler residencies
+   *
+   * Prochot (thermal) - PPT (power)
+   * Package Power Tracking (PPT) violation % (greater than 0% is a violation);
+   * aka PVIOL
+   *
+   * Ex. PVIOL/TVIOL calculations
+   * Where A and B are measurments recorded at prior points in time.
+   * Typically A is the earlier measured value and B is the latest measured value.
+   *
+   * PVIOL % = (PptResidencyAcc (B) - PptResidencyAcc (A)) * 100/ (AccumulationCounter (B) - AccumulationCounter (A))
+   * TVIOL % = (SocketThmResidencyAcc (B) -  SocketThmResidencyAcc (A)) * 100 / (AccumulationCounter (B) - AccumulationCounter (A))
+  */
+  uint64_t ppt_residency_acc;
+  /**
+   * Accumulated throttler residencies
+   *
+   * Socket (thermal) -
+   * Socket thermal violation % (greater than 0% is a violation);
+   * aka TVIOL
+   *
+   * Ex. PVIOL/TVIOL calculations
+   * Where A and B are measurments recorded at prior points in time.
+   * Typically A is the earlier measured value and B is the latest measured value.
+   *
+   * PVIOL % = (PptResidencyAcc (B) - PptResidencyAcc (A)) * 100/ (AccumulationCounter (B) - AccumulationCounter (A))
+   * TVIOL % = (SocketThmResidencyAcc (B) -  SocketThmResidencyAcc (A)) * 100 / (AccumulationCounter (B) - AccumulationCounter (A))
+  */
+  uint64_t socket_thm_residency_acc;
+  uint64_t vr_thm_residency_acc;
+  uint64_t hbm_thm_residency_acc;
+
+  /* Number of current partition */
+  uint16_t num_partition;
+
+  /* XCP (Graphic Cluster Partitions) metrics stats */
+  struct amdgpu_xcp_metrics_t xcp_stats[RSMI_MAX_NUM_XCP];
+
+  /* PCIE other end recovery counter */
+  uint32_t pcie_lc_perf_other_end_recovery;
+
+  /*
+  * v1.7 additions
+  */
+  /* VRAM max bandwidth at max memory clock (GB/s) */
+  uint64_t vram_max_bandwidth;
+
+  /* XGMI link status(up/down) */
+  uint16_t xgmi_link_status[RSMI_MAX_NUM_XGMI_LINKS];
 
   /// \endcond
 } rsmi_gpu_metrics_t;
@@ -1158,23 +1269,51 @@ typedef union id {
         uint64_t id;           //!< uint64_t representation of value
         const char *name;      //!< name string (applicable to functions only)
         union {
-            //!< Used for ::rsmi_memory_type_t variants
+            /** Used for ::rsmi_memory_type_t variants */
             rsmi_memory_type_t memory_type;
-            //!< Used for ::rsmi_temperature_metric_t variants
+            /** Used for ::rsmi_temperature_metric_t variants */
             rsmi_temperature_metric_t temp_metric;
-            //!< Used for ::rsmi_event_type_t variants
+            /** Used for ::rsmi_event_type_t variants */
             rsmi_event_type_t evnt_type;
-            //!< Used for ::rsmi_event_group_t variants
+            /** Used for ::rsmi_event_group_t variants */
             rsmi_event_group_t evnt_group;
-            //!< Used for ::rsmi_clk_type_t variants
+            /** Used for ::rsmi_clk_type_t variants */
             rsmi_clk_type_t clk_type;
-            //!< Used for ::rsmi_fw_block_t variants
+            /** Used for ::rsmi_fw_block_t variants */
             rsmi_fw_block_t fw_block;
-            //!< Used for ::rsmi_gpu_block_t variants
+            /** Used for ::rsmi_gpu_block_t variants */
             rsmi_gpu_block_t gpu_block_type;
         };
 } rsmi_func_id_value_t;
 
+/**
+ * @struct rsmi_device_identifiers_t
+ * @brief Structure to hold various identifiers for a GPU device.
+ *
+ * @details This structure contains fields that uniquely identify a GPU device,
+ * including its card index, DRM render minor, PCI Bus/Device/Function ID (BDFID),
+ * KFD GPU ID, partition ID, and SMI device ID.
+ */
+typedef struct {
+  //!< The card index of the device.
+  uint32_t card_index;
+  //!< The DRM render minor number of the device.
+  uint32_t drm_render_minor;
+
+  //!< The PCI Bus/Device/Function identifier (BDFID) of the device.
+  uint64_t bdfid;
+
+  //!< The KFD (Kernel Fusion Driver) GPU ID of the device.
+  uint64_t kfd_gpu_id;
+
+  //!< The partition ID of the device.
+  uint32_t partition_id;
+
+  //!< The SMI (System Management Interface) device ID.
+  uint32_t smi_device_id;
+
+  uint32_t reserved[10];
+} rsmi_device_identifiers_t;
 
 /*****************************************************************************/
 /** @defgroup InitShutAdmin Initialization and Shutdown
@@ -1424,8 +1563,35 @@ rsmi_status_t rsmi_dev_brand_get(uint32_t dv_ind, char *brand, uint32_t len);
  *  be written.
  *
  */
-rsmi_status_t rsmi_dev_vendor_name_get(uint32_t dv_ind, char *name,
-                                                                  size_t len);
+rsmi_status_t rsmi_dev_vendor_name_get(uint32_t dv_ind, char *name, size_t len);
+
+
+/**
+ *  @brief Get the device's market name
+ *
+ *  @details Given a device index @p dv_ind, a pointer to a caller provided
+ *  char buffer @p market_name, and a length of this buffer @p len, this function will
+ *  write the name of the market name (up to @p len characters) buffer @p market_name.
+ *
+ *  @param[inout] market_name a pointer to a caller provided char buffer to which the
+ *  market name will be written
+ *  If this parameter is nullptr, this function will return
+ *  ::RSMI_STATUS_INVALID_ARGS if the function is supported with the provided,
+ *  arguments and ::RSMI_STATUS_DRM_ERROR if a DRM error occurs
+ *
+ *  @param[in] len the length of the caller provided buffer @p name.
+ *
+ *  @retval ::RSMI_STATUS_SUCCESS call was successful
+ *  @retval ::RSMI_STATUS_NOT_SUPPORTED installed software or hardware does not
+ *  support this function with the given arguments
+ *  @retval ::RSMI_STATUS_INVALID_ARGS the provided arguments are not valid
+ *  @retval ::RSMI_STATUS_DRM_ERROR if a DRM error occurs
+ *  @retval ::RSMI_STATUS_INSUFFICIENT_SIZE is returned if @p len bytes is not
+ *  large enough to hold the entire name. In this case, only @p len bytes will
+ *  be written.
+ *
+ */
+rsmi_status_t rsmi_dev_market_name_get(uint32_t dv_ind, char *market_name, uint32_t len);
 
 /**
  *  @brief Get the vram vendor string of a gpu device.
@@ -1675,6 +1841,35 @@ rsmi_status_t rsmi_dev_guid_get(uint32_t dv_ind, uint64_t *guid);
  */
 rsmi_status_t rsmi_dev_node_id_get(uint32_t dv_ind, uint32_t *node_id);
 
+/**
+ * @brief Retrieves the device identifiers for a specific GPU device.
+ *
+ * @details This function retrieves various identifiers for a GPU device, such as
+ * the card index, DRM render minor, BDFID, KFD GPU ID, partition ID, and SMI device ID.
+ * The identifiers are written to the provided `rsmi_device_identifiers_t` structure.
+ *
+ * @param[in] dv_ind a device index.
+ *
+ * @param[out] identifiers A pointer to a structure of type `rsmi_device_identifiers_t`
+ *                         where the device identifiers will be stored. The structure
+ *                         contains fields such as:
+ *                         - `card_index`: The card index of the device.
+ *                         - `drm_render_minor`: The DRM render minor number.
+ *                         - `bdfid`: The Bus/Device/Function PCI identifier.
+ *                         - `kfd_gpu_id`: The KFD GPU ID.
+ *                         - `partition_id`: The partition ID of the device.
+ *                         - `smi_device_id`: The SMI device ID.
+ *
+ * @retval ::RSMI_STATUS_SUCCESS The call was successful, and the device identifiers were retrieved.
+ * @retval ::RSMI_STATUS_NOT_SUPPORTED The installed software or hardware does not support this function
+ *                                     with the given arguments.
+ * @retval ::RSMI_STATUS_INVALID_ARGS The provided arguments are invalid.
+ *
+ * @note Ensure that the `identifiers` pointer is valid and points to a properly allocated structure
+ *       before calling this function.
+ */
+rsmi_status_t rsmi_dev_device_identifiers_get(uint32_t dv_ind,
+                                              rsmi_device_identifiers_t *identifiers);
 
 /** @} */  // end of IDQuer
 
@@ -1719,6 +1914,7 @@ rsmi_dev_pci_bandwidth_get(uint32_t dv_ind, rsmi_pcie_bandwidth_t *bandwidth);
  *              | ((BUS & 0xFF) << 8) | ((DEVICE & 0x1F) <<3 )
  *              | (FUNCTION & 0x7)
  *
+ *  \code{.unparsed}
  *  | Name         | Field   | KFD property       KFD -> PCIe ID (uint64_t)
  *  -------------- | ------- | ---------------- | ---------------------------- |
  *  | Domain       | [63:32] | "domain"         | (DOMAIN & 0xFFFFFFFF) << 32  |
@@ -1727,6 +1923,15 @@ rsmi_dev_pci_bandwidth_get(uint32_t dv_ind, rsmi_pcie_bandwidth_t *bandwidth);
  *  | Bus          | [15: 8] | "location id"    | (LOCATION & 0xFF00)          |
  *  | Device       | [ 7: 3] | "location id"    | (LOCATION & 0xF8)            |
  *  | Function     | [ 2: 0] | "location id"    | (LOCATION & 0x7)             |
+ *  \endcode
+ *
+ *  Note: In some devices, the partition ID may be stored in the function bits
+ *  BDFID[2:0] instead of BDFID[31:28].
+ *
+ *  Note: For MI series devices, the function bits are only used to store the
+ *  partition ID, but this modified BDF is internal to the ROCm stack.
+ *  To the OS, partitions share the same BDF as the unpartitioned device and
+ *  have function bits = 0, which can be verified through lspci.
  *
  *  @param[in] dv_ind a device index
  *
@@ -3644,8 +3849,10 @@ rsmi_counter_available_counters_get(uint32_t dv_ind,
  *  @details Given a non-NULL pointer to an array @p procs of
  *  ::rsmi_process_info_t's, of length *@p num_items, this function will write
  *  up to *@p num_items instances of ::rsmi_process_info_t to the memory pointed
- *  to by @p procs. These instances contain information about each process
- *  utilizing a GPU. If @p procs is not NULL, @p num_items will be updated with
+ *  to by @p procs. These instances contain information about each GPU compute
+ *  process and their PASID for further analysis or monitoring via
+ *  ::rsmi_compute_process_info_by_pid_get().
+ *  If @p procs is not NULL, @p num_items will be updated with
  *  the number of processes actually written. If @p procs is NULL, @p num_items
  *  will be updated with the number of processes for which there is current
  *  process information. Calling this function with @p procs being NULL is a way
@@ -4035,25 +4242,6 @@ rsmi_dev_compute_partition_set(uint32_t dv_ind,
                                rsmi_compute_partition_type_t compute_partition);
 
 /**
- *  @brief Reverts a selected device's compute partition setting back to its
- *  boot state.
- *
- *  @details Given a device index @p dv_ind , this function will attempt to
- *  revert its compute partition setting back to its boot state.
- *
- *  @param[in] dv_ind a device index
- *
- *  @retval ::RSMI_STATUS_SUCCESS call was successful
- *  @retval ::RSMI_STATUS_PERMISSION function requires root access
- *  @retval ::RSMI_STATUS_NOT_SUPPORTED installed software or hardware does not
- *  support this function
- *  @retval ::RSMI_STATUS_BUSY A resource or mutex could not be acquired
- *  because it is already being used - device is busy
- *
- */
-rsmi_status_t rsmi_dev_compute_partition_reset(uint32_t dv_ind);
-
-/**
  *  @brief Retrieves the partition_id for a desired device
  *
  *  @details
@@ -4119,6 +4307,39 @@ rsmi_dev_memory_partition_get(uint32_t dv_ind, char *memory_partition,
                               uint32_t len);
 
 /**
+ *  @brief Retrieves the available memory partition capabilities
+ *  for a desired device
+ *
+ *  @details
+ *  Given a device index @p dv_ind and a string @p memory_partition_caps ,
+ *  and uint32 @p len , this function will attempt to obtain the device's
+ *  available memory partition capabilities string. Upon successful
+ *  retreival, the obtained device's available memory partition capablilities
+ *  string shall be stored in the passed @p memory_partition_caps
+ *  char string variable.
+ *
+ *  @param[in] dv_ind a device index
+ *
+ *  @param[inout] memory_partition_caps a pointer to a char string variable,
+ *  which the device's available memory partition capabilities will be written to.
+ *
+ *  @param[in] len the length of the caller provided buffer @p len ,
+ *  suggested length is 30 or greater.
+ *
+ *  @retval ::RSMI_STATUS_SUCCESS call was successful
+ *  @retval ::RSMI_STATUS_INVALID_ARGS the provided arguments are not valid
+ *  @retval ::RSMI_STATUS_UNEXPECTED_DATA data provided to function is not valid
+ *  @retval ::RSMI_STATUS_NOT_SUPPORTED installed software or hardware does not
+ *  support this function
+ *  @retval ::RSMI_STATUS_INSUFFICIENT_SIZE is returned if @p len bytes is not
+ *  large enough to hold the entire memory partition value. In this case,
+ *  only @p len bytes will be written.
+ *
+ */
+rsmi_status_t rsmi_dev_memory_partition_capabilities_get(
+                uint32_t dv_ind, char *memory_partition_caps, uint32_t len);
+
+/**
  *  @brief Modifies a selected device's current memory partition setting.
  *
  *  @details Given a device index @p dv_ind and a type of memory partition
@@ -4144,27 +4365,6 @@ rsmi_dev_memory_partition_get(uint32_t dv_ind, char *memory_partition,
 rsmi_status_t
 rsmi_dev_memory_partition_set(uint32_t dv_ind,
                               rsmi_memory_partition_type_t memory_partition);
-
-/**
- *  @brief Reverts a selected device's memory partition setting back to its
- *  boot state.
- *
- *  @details Given a device index @p dv_ind , this function will attempt to
- *  revert its current memory partition setting back to its boot state.
- *
- *  @param[in] dv_ind a device index
- *
- *  @retval ::RSMI_STATUS_SUCCESS call was successful
- *  @retval ::RSMI_STATUS_PERMISSION function requires root access
- *  @retval ::RSMI_STATUS_NOT_SUPPORTED installed software or hardware does not
- *  support this function
- *  @retval ::RSMI_STATUS_AMDGPU_RESTART_ERR could not successfully restart
- *  the amdgpu driver
- *  @retval ::RSMI_STATUS_BUSY A resource or mutex could not be acquired
- *  because it is already being used - device is busy
- *
- */
-rsmi_status_t rsmi_dev_memory_partition_reset(uint32_t dv_ind);
 
 /** @} */  // end of memory_partition
 

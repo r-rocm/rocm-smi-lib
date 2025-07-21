@@ -110,17 +110,63 @@ mapStringToRSMIMemoryPartitionTypes {
   {"NPS8", RSMI_MEMORY_PARTITION_NPS8}
 };
 
+static const std::map<std::string, rsmi_compute_partition_type_t>
+mapStringToRSMIComputePartitionTypes {
+  {"DPX", RSMI_COMPUTE_PARTITION_DPX},
+  {"TPX", RSMI_COMPUTE_PARTITION_TPX},
+  {"QPX", RSMI_COMPUTE_PARTITION_QPX},
+  {"CPX", RSMI_COMPUTE_PARTITION_CPX},
+  {"SPX", RSMI_COMPUTE_PARTITION_SPX}
+};
+
 void TestMemoryPartitionReadWrite::Run(void) {
-  rsmi_status_t ret, err;
+  rsmi_status_t ret, err, ret_set;
   char orig_memory_partition[255];
   char current_memory_partition[255];
+  char current_memory_capabilities[255];
   orig_memory_partition[0] = '\0';
   current_memory_partition[0] = '\0';
+  current_memory_capabilities[0] = '\0';
 
   TestBase::Run();
   if (setup_failed_) {
     std::cout << "** SetUp Failed for this test. Skipping.**" << std::endl;
     return;
+  }
+
+  // initial_num_devices - keep this value static, due to parition changes
+  // fluctuating # of devices. We should end up with same # of devices at
+  // end of test.
+  uint32_t initial_num_devices = num_monitor_devs();
+  char orig_char_computePartition[initial_num_devices][255];
+  char current_char_computePartition[255];
+
+  for (uint32_t dv_ind = 0; dv_ind < num_monitor_devs(); ++dv_ind) {
+    // Run and get compute_partition, so we can reset to later
+    ret = rsmi_dev_compute_partition_get(dv_ind, orig_char_computePartition[dv_ind],
+      255);
+    if(ret == RSMI_STATUS_SETTING_UNAVAILABLE
+      || ret== RSMI_STATUS_PERMISSION
+      || ret == RSMI_STATUS_BUSY
+      || ret == RSMI_STATUS_NOT_SUPPORTED
+      || ret == RSMI_STATUS_INVALID_ARGS) {
+      IF_VERB(STANDARD) {
+        std::cout << "\t**rsmi_dev_compute_partition_get(): "
+        << "Not supported on this device"
+        << std::endl;
+      }
+      continue;
+    }
+
+    std::cout << "\t**rsmi_dev_compute_partition_get(" << dv_ind
+      << ", " << orig_char_computePartition[dv_ind] << ")\n";
+
+    ret = rsmi_dev_compute_partition_get(dv_ind, orig_char_computePartition[dv_ind], 255);
+    IF_VERB(STANDARD) {
+      std::cout << std::endl << "\t**"
+        << "Original compute partition: "
+        << orig_char_computePartition[dv_ind] << std::endl;
+    }
   }
 
   for (uint32_t dv_ind = 0; dv_ind < num_monitor_devs(); ++dv_ind) {
@@ -177,7 +223,18 @@ void TestMemoryPartitionReadWrite::Run(void) {
 
     if (err == RSMI_STATUS_INVALID_ARGS) {
       IF_VERB(STANDARD) {
-        std::cout << "\t**"
+        std::cout << "\t**rsmi_dev_memory_partition_get(dv_ind, nullptr, 255): "
+                  << "Confirmed RSMI_STATUS_INVALID_ARGS was returned."
+                  << std::endl;
+      }
+    }
+
+    err = rsmi_dev_memory_partition_capabilities_get(dv_ind, nullptr, 255);
+    ASSERT_EQ(err, RSMI_STATUS_INVALID_ARGS);
+
+    if (err == RSMI_STATUS_INVALID_ARGS) {
+      IF_VERB(STANDARD) {
+        std::cout << "\t**rsmi_dev_memory_partition_capabilities_get(dv_ind, nullptr, 255): "
                   << "Confirmed RSMI_STATUS_INVALID_ARGS was returned."
                   << std::endl;
       }
@@ -189,7 +246,20 @@ void TestMemoryPartitionReadWrite::Run(void) {
                 (err == RSMI_STATUS_NOT_SUPPORTED));
     if (err == RSMI_STATUS_INVALID_ARGS) {
       IF_VERB(STANDARD) {
+        std::cout << "\t**rsmi_dev_memory_partition_get(dv_ind, orig_memory_partition, 0): "
+                  << "Confirmed RSMI_STATUS_INVALID_ARGS was returned."
+                  << std::endl;
+      }
+    }
+
+    err = rsmi_dev_memory_partition_capabilities_get(dv_ind, current_memory_capabilities, 0);
+    ASSERT_TRUE((err == RSMI_STATUS_INVALID_ARGS) ||
+                (err == RSMI_STATUS_NOT_SUPPORTED));
+    if (err == RSMI_STATUS_INVALID_ARGS) {
+      IF_VERB(STANDARD) {
         std::cout << "\t**"
+                  << "rsmi_dev_memory_partition_capabilities_get(dv_ind, "
+                  << "current_memory_capabilities, 0): "
                   << "Confirmed RSMI_STATUS_INVALID_ARGS was returned."
                   << std::endl;
       }
@@ -254,6 +324,8 @@ void TestMemoryPartitionReadWrite::Run(void) {
     for (int partition = RSMI_MEMORY_PARTITION_NPS1;
          partition <= RSMI_MEMORY_PARTITION_NPS8;
          partition++) {
+      ret_set = RSMI_STATUS_NOT_SUPPORTED;
+      wasSetSuccess = false;
       new_memory_partition = static_cast<rsmi_memory_partition_type>(partition);
       IF_VERB(STANDARD) {
         std::cout << std::endl;
@@ -267,17 +339,46 @@ void TestMemoryPartitionReadWrite::Run(void) {
                   << "Attempting to set memory partition to: "
                   << memoryPartitionString(new_memory_partition) << std::endl;
       }
-      ret = rsmi_dev_memory_partition_set(dv_ind, new_memory_partition);
-      if (ret == RSMI_STATUS_NOT_SUPPORTED) {
+
+      rsmi_status_t ret_caps = rsmi_dev_memory_partition_capabilities_get(dv_ind,
+                                    current_memory_capabilities, 255);
+      IF_VERB(STANDARD) {
+        std::cout << "\t**"
+                  << "rsmi_dev_memory_partition_capabilities_get(" << dv_ind
+                  << ", current_memory_capabilities, 255): "
+                  << amd::smi::getRSMIStatusString(ret_caps, false) << std::endl;
+        std::cout << "\t**"
+                  << "current_memory_capabilities: " << current_memory_capabilities
+                  << std::endl;
+      }
+      ASSERT_TRUE((ret_caps == RSMI_STATUS_NOT_SUPPORTED) ||
+                  (ret_caps == RSMI_STATUS_SUCCESS));
+
+      ret_set = rsmi_dev_memory_partition_set(dv_ind, new_memory_partition);
+      IF_VERB(STANDARD) {
+        std::cout << "\t**" <<  "rsmi_dev_memory_partition_set("
+                  << dv_ind << " , " << memoryPartitionString(new_memory_partition) << "): "
+                  << amd::smi::getRSMIStatusString(ret_set, false) << "\n";
+      }
+      if (ret_set == RSMI_STATUS_NOT_SUPPORTED) {
         IF_VERB(STANDARD) {
           std::cout << "\t**" <<  ": "
                     << "Not supported on this machine" << std::endl;
         }
         break;
       } else {
-        CHK_ERR_ASRT(ret)
+        ASSERT_TRUE((ret_set == RSMI_STATUS_SUCCESS)
+                  || (ret_set == RSMI_STATUS_BUSY)
+                  || (ret_set == RSMI_STATUS_AMDGPU_RESTART_ERR)
+                  || (ret_set == RSMI_STATUS_INVALID_ARGS)
+                  || (ret_set == RSMI_STATUS_NOT_SUPPORTED));
       }
-      if (ret != RSMI_STATUS_SUCCESS) {  // do not continue trying to reset
+      IF_VERB(STANDARD) {
+        std::cout << "\t**" <<  "rsmi_dev_memory_partition_set("
+                  << dv_ind << " , " << memoryPartitionString(new_memory_partition) << "): "
+                  << amd::smi::getRSMIStatusString(ret_set, false) << "\n";
+      }
+      if (ret_set == RSMI_STATUS_SUCCESS) {  // do not continue trying to reset
         wasSetSuccess = true;
       }
 
@@ -289,48 +390,15 @@ void TestMemoryPartitionReadWrite::Run(void) {
                   << "Current memory partition: " << current_memory_partition
                   << std::endl;
       }
-      ASSERT_EQ(RSMI_STATUS_SUCCESS, ret);
-      ASSERT_STREQ(memoryPartitionString(new_memory_partition).c_str(),
+      if (wasSetSuccess) {
+        ASSERT_EQ(RSMI_STATUS_SUCCESS, ret_set);
+        ASSERT_STREQ(memoryPartitionString(new_memory_partition).c_str(),
                    current_memory_partition);
-    }
-
-    /* TEST RETURN TO BOOT MEMORY PARTITION SETTING */
-    IF_VERB(STANDARD) {
-      std::cout << std::endl;
-      std::cout << "\t**"
-                << "=========== TEST RETURN TO BOOT MEMORY PARTITION "
-                << "SETTING ========" << std::endl;
-    }
-    std::string oldMode = current_memory_partition;
-    bool wasResetSuccess = false;
-    ret = rsmi_dev_memory_partition_reset(dv_ind);
-    ASSERT_TRUE((ret == RSMI_STATUS_SUCCESS) ||
-                (ret == RSMI_STATUS_NOT_SUPPORTED));
-    if (ret == RSMI_STATUS_SUCCESS) {
-      wasResetSuccess = true;
-    }
-    ret = rsmi_dev_memory_partition_get(dv_ind, current_memory_partition, 255);
-    CHK_ERR_ASRT(ret)
-    IF_VERB(STANDARD) {
-      std::cout << "\t**"
-                << "Current memory partition: " << current_memory_partition
-                << std::endl;
-    }
-    if (wasResetSuccess && wasSetSuccess) {
-      ASSERT_STRNE(oldMode.c_str(), current_memory_partition);
-      IF_VERB(STANDARD) {
-      std::cout << "\t**"
-                << "Confirmed prior memory partition (" << oldMode << ") is "
-                << "not equal to current memory partition ("
-                << current_memory_partition << ")" << std::endl;
-      }
-    } else {
-      ASSERT_STREQ(oldMode.c_str(), current_memory_partition);
-      IF_VERB(STANDARD) {
-      std::cout << "\t**"
-                << "Confirmed prior memory partition (" << oldMode << ") is "
-                << "equal to current memory partition ("
-                << current_memory_partition << ")" << std::endl;
+        CHK_ERR_ASRT(ret_set)
+      } else {
+        ASSERT_NE(RSMI_STATUS_SUCCESS, ret_set);
+        ASSERT_STRNE(memoryPartitionString(new_memory_partition).c_str(),
+                   current_memory_partition);
       }
     }
 
@@ -339,8 +407,19 @@ void TestMemoryPartitionReadWrite::Run(void) {
       std::cout << std::endl;
       std::cout << "\t**"
                 << "=========== TEST RETURN TO ORIGINAL MEMORY PARTITION "
-                << "SETTING ========" << std::endl;
+                << "SETTING ( " << orig_memory_partition
+                << " ) ========" << std::endl;
     }
+    std::string oldMode = current_memory_partition;
+
+    ret = rsmi_dev_memory_partition_get(dv_ind, current_memory_partition, 255);
+    CHK_ERR_ASRT(ret)
+    IF_VERB(STANDARD) {
+      std::cout << "\t**"
+                << "Current memory partition: " << current_memory_partition
+                << std::endl;
+    }
+
     new_memory_partition
       = mapStringToRSMIMemoryPartitionTypes.at(orig_memory_partition);
     IF_VERB(STANDARD) {
@@ -348,6 +427,12 @@ void TestMemoryPartitionReadWrite::Run(void) {
                 << memoryPartitionString(new_memory_partition) << std::endl;
     }
     ret = rsmi_dev_memory_partition_set(dv_ind, new_memory_partition);
+    IF_VERB(STANDARD) {
+      std::cout << "\t**"
+                << "rsmi_dev_memory_partition_set(" << dv_ind
+                << ", " << orig_memory_partition << "): "
+                << amd::smi::getRSMIStatusString(ret, false) << std::endl;
+    }
     CHK_ERR_ASRT(ret)
     ret = rsmi_dev_memory_partition_get(dv_ind, current_memory_partition, 255);
     CHK_ERR_ASRT(ret)
@@ -359,6 +444,36 @@ void TestMemoryPartitionReadWrite::Run(void) {
                 << std::endl;
     }
     ASSERT_EQ(RSMI_STATUS_SUCCESS, ret);
-    ASSERT_STREQ(memoryPartitionString(new_memory_partition).c_str(), current_memory_partition);
+    ASSERT_STREQ(orig_memory_partition, current_memory_partition);
+    IF_VERB(STANDARD) {
+      std::cout << "\t**"
+                << "Confirmed prior memory partition (" << orig_memory_partition
+                << ") is  equal to current memory partition ("
+                << current_memory_partition << ")" << std::endl;
+    }
+  }
+
+  // Return to original compute_partition
+  for (uint32_t dv_ind = 0; dv_ind < num_monitor_devs(); ++dv_ind) {
+    ret = rsmi_dev_compute_partition_get(dv_ind, current_char_computePartition, 255);
+    if(ret == RSMI_STATUS_SETTING_UNAVAILABLE
+      || ret== RSMI_STATUS_PERMISSION
+      || ret == RSMI_STATUS_BUSY
+      || ret == RSMI_STATUS_NOT_SUPPORTED
+      || ret == RSMI_STATUS_INVALID_ARGS)
+      continue;
+
+    if (strcmp(orig_char_computePartition[dv_ind], current_char_computePartition) != 0) {
+      rsmi_compute_partition_type_t newPartition
+        = mapStringToRSMIComputePartitionTypes.at(
+                                      std::string(orig_char_computePartition[dv_ind]));
+      ret = rsmi_dev_compute_partition_set(dv_ind, newPartition);
+
+      IF_VERB(STANDARD) {
+        std::cout << "\t**"
+                  << "Returning compute partition to: "
+                  << std::string(orig_char_computePartition[dv_ind]) << std::endl;
+      }
+    }
   }
 }

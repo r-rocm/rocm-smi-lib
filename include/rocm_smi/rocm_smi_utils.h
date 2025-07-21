@@ -48,14 +48,18 @@
 #include <algorithm>
 #include <cstdint>
 #include <iomanip>
+#include <iosfwd>
 #include <iostream>
+#include <iterator>
 #include <limits>
+#include <ostream>
 #include <queue>
 #include <sstream>
 #include <string>
 #include <tuple>
 #include <type_traits>
 #include <vector>
+#include <utility>
 
 #include "rocm_smi/rocm_smi_device.h"
 
@@ -78,6 +82,7 @@ int SameFile(const std::string fileA, const std::string fileB);
 bool FileExists(char const *filename);
 std::vector<std::string> globFilesExist(const std::string& filePattern);
 int isRegularFile(std::string fname, bool *is_reg);
+int isReadOnlyForAll(const std::string& fname, bool *is_read_only);
 int ReadSysfsStr(std::string path, std::string *retStr);
 int WriteSysfsStr(std::string path, std::string val);
 bool IsInteger(const std::string & n_str);
@@ -86,7 +91,8 @@ std::pair<bool, std::string> executeCommand(std::string command,
 rsmi_status_t storeTmpFile(uint32_t dv_ind, std::string parameterName,
                            std::string stateName, std::string storageData);
 std::vector<std::string> getListOfAppTmpFiles();
-bool containsString(std::string originalString, std::string substring);
+bool containsString(std::string originalString, std::string substring,
+                    bool displayComparisons = false);
 std::tuple<bool, std::string> readTmpFile(
                                           uint32_t dv_ind,
                                           std::string stateName,
@@ -134,6 +140,10 @@ std::string removeNewLines(const std::string &s);
 
 std::string removeString(const std::string origStr,
                         const std::string &removeMe);
+void system_wait(int milli_seconds);
+int countDigit(uint64_t n);
+std::string find_file_in_folder(const std::string& folder,
+               const std::string& regex);
 template <typename T>
   std::string print_int_as_hex(T i, bool showHexNotation = true,
   int overloadBitSize = 0) {
@@ -597,6 +607,74 @@ class TagTextContents_t
 
 using TextFileTagContents_t = TagTextContents_t<std::string, std::string,
                                                 std::string, std::string>;
+
+
+//
+//  Note: Output iterator that inserts a delimiter between elements.
+//
+template<typename DelimiterType, typename CharType = char,
+         typename TraitsType = std::char_traits<CharType>>
+class ostream_joiner {
+ public:
+  using Char_t = CharType;
+  using Traits_t = TraitsType;
+  using Ostream_t = std::basic_ostream<Char_t, Traits_t>;
+  using iterator_category = std::output_iterator_tag;
+  using value_type = void;
+  using difference_type = void;
+  using pointer = void;
+  using reference = void;
+
+
+  ostream_joiner(Ostream_t* outstream,
+                const DelimiterType& delimiter) noexcept
+      (std::is_nothrow_copy_constructible_v<DelimiterType>)
+        : m_outstream(outstream), m_delimiter(delimiter) {}
+
+  ostream_joiner(Ostream_t* outstream, DelimiterType&& delimiter) noexcept
+    (std::is_nothrow_move_constructible_v<DelimiterType>)
+      : m_outstream(outstream), m_delimiter(std::move(delimiter)) {}
+
+  template<typename ValueType> ostream_joiner& operator=(const ValueType& value) {
+    if (!m_is_first) {
+      *m_outstream << m_delimiter;
+    }
+    this->m_is_first = false;
+    this->m_value_count++;
+
+    if ((m_value_count % kMAX_VALUES_PER_LINE) == 0) {
+      *m_outstream << "\n" << value;
+      this->m_value_count = 0;
+    } else {
+      *m_outstream << value;
+    }
+
+    return *this;
+  }
+
+  ostream_joiner& operator*() noexcept { return *this; }
+  ostream_joiner& operator++() noexcept { return *this; }
+  ostream_joiner& operator++(int) noexcept { return *this; }
+
+
+ private:
+  Ostream_t* m_outstream;
+  DelimiterType m_delimiter;
+  bool m_is_first = true;
+  uint32_t m_value_count = 0;
+  const uint32_t kMAX_VALUES_PER_LINE = 9;
+};
+
+/// Object generator for ostream_joiner.
+template<typename CharType, typename TraitsType, typename DelimiterType>
+inline ostream_joiner<std::decay_t<DelimiterType>, CharType, TraitsType>
+  make_ostream_joiner(std::basic_ostream<CharType, TraitsType>* outstream,
+    DelimiterType&& delimiter) {
+    return {
+      outstream,
+      std::forward<DelimiterType>(delimiter)
+    };
+}
 
 
 }  // namespace smi
