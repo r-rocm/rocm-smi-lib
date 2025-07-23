@@ -32,6 +32,7 @@ Depends:
  ${misc:Depends},
  rocm-core,
  rocm-env,
+ rocm-smi-lib,
  libdrm-dev,
 Description: Use C++ in ROCm SMI. Development package
  Use C++ in ROCm SMI. Development package.
